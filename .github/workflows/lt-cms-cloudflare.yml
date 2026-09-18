@@ -1,0 +1,160 @@
+name: LT-CMS Private Source -> Cloudflare Preview
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lt-cms-private-cloudflare-preview
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      SOURCE_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN || secrets.token }}
+
+    steps:
+      - name: Validate private source credential
+        shell: bash
+        run: |
+          if [ -z "$SOURCE_TOKEN" ]; then
+            echo "::error::Missing repository secret PRIVATE_REPO_TOKEN (or token)."
+            exit 1
+          fi
+
+      - name: Checkout private LT-CMS only into ephemeral runner
+        uses: actions/checkout@v4
+        with:
+          repository: valuesplayshg/LT-CMS
+          ref: main
+          token: ${{ env.SOURCE_TOKEN }}
+          path: _src
+          fetch-depth: 1
+          persist-credentials: false
+          show-progress: false
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build frontend privately
+        shell: bash
+        working-directory: _src/frontend
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund >/tmp/ltcms-npm.log 2>&1
+          npm run build >>/tmp/ltcms-npm.log 2>&1
+          echo "Frontend build completed."
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Build backend privately
+        shell: bash
+        working-directory: _src/backend
+        run: |
+          set -euo pipefail
+          mvn -q -B -Dmaven.test.skip=true clean package >/tmp/ltcms-maven.log 2>&1
+          echo "Backend build completed."
+
+      - name: Start LT-CMS privately
+        shell: bash
+        env:
+          SESSION_COOKIE_SECURE: "false"
+        run: |
+          set -euo pipefail
+          JAR=$(find _src/backend/target -maxdepth 1 -name 'lt-cms-*.jar' ! -name '*.original' | head -1)
+          test -n "$JAR"
+          nohup java -jar "$JAR" >/tmp/ltcms-app.log 2>&1 &
+          echo $! >/tmp/ltcms-app.pid
+          for i in {1..90}; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8087/api/system/info || true)
+            if [ "$code" = "200" ]; then
+              echo "LT-CMS started."
+              exit 0
+            fi
+            if ! kill -0 "$(cat /tmp/ltcms-app.pid)" 2>/dev/null; then
+              echo "::error::LT-CMS process stopped during startup."
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "::error::LT-CMS startup timed out."
+          exit 1
+
+      - name: Start Cloudflare Quick Tunnel
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 -sS -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x /tmp/cloudflared
+
+          WORKING_URL=""
+          for attempt in 1 2 3; do
+            rm -f /tmp/cloudflared.log /tmp/cloudflared.pid
+            nohup /tmp/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8087 >/tmp/cloudflared.log 2>&1 &
+            echo $! >/tmp/cloudflared.pid
+
+            URL=""
+            for i in {1..60}; do
+              URL=$(grep -Eo 'https://[a-zA-Z0-9-]+\\.trycloudflare\\.com' /tmp/cloudflared.log | head -1 || true)
+              [ -n "$URL" ] && break
+              sleep 2
+            done
+
+            if [ -z "$URL" ]; then
+              kill "$(cat /tmp/cloudflared.pid)" 2>/dev/null || true
+              sleep 3
+              continue
+            fi
+
+            for i in {1..45}; do
+              code=$(curl -k -sS -L -o /dev/null -w '%{http_code}' "$URL" || true)
+              if [[ "$code" =~ ^(200|301|302|401|403)$ ]]; then
+                WORKING_URL="$URL"
+                break
+              fi
+              sleep 2
+            done
+
+            [ -n "$WORKING_URL" ] && break
+            kill "$(cat /tmp/cloudflared.pid)" 2>/dev/null || true
+            sleep 3
+          done
+
+          if [ -z "$WORKING_URL" ]; then
+            echo "::error::Unable to establish Cloudflare Quick Tunnel."
+            exit 1
+          fi
+
+          echo "CLOUDFLARE_URL=$WORKING_URL" >> "$GITHUB_ENV"
+          echo "### LT-CMS Cloudflare Preview" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "$WORKING_URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "LT-CMS CLOUDFLARE URL: $WORKING_URL"
+
+      - name: Keep preview alive
+        shell: bash
+        run: |
+          echo "Preview is live: $CLOUDFLARE_URL"
+          sleep 20400
+
+      - name: Secure cleanup
+        if: always()
+        shell: bash
+        run: |
+          if [ -f /tmp/cloudflared.pid ]; then kill "$(cat /tmp/cloudflared.pid)" 2>/dev/null || true; fi
+          if [ -f /tmp/ltcms-app.pid ]; then kill "$(cat /tmp/ltcms-app.pid)" 2>/dev/null || true; fi
+          rm -rf "$GITHUB_WORKSPACE/_src"
+          rm -f /tmp/ltcms-npm.log /tmp/ltcms-maven.log /tmp/ltcms-app.log /tmp/cloudflared.log /tmp/cloudflared /tmp/cloudflared.pid /tmp/ltcms-app.pid
+          echo "Ephemeral private source and local logs removed."
