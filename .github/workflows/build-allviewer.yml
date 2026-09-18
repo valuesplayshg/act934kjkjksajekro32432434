@@ -1,0 +1,44 @@
+name: Build All Viewer APK
+
+on:
+  push:
+    branches: [ "all-viewer-apk-260918" ]
+    paths:
+      - "allviewer_chunks/**"
+      - ".github/workflows/build-allviewer.yml"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "allviewer_chunks/**"
+      - ".github/workflows/build-allviewer.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct source
+        shell: bash
+        run: |
+          mkdir -p allviewer
+          cat allviewer_chunks/chunk00 allviewer_chunks/chunk01 allviewer_chunks/chunk02 allviewer_chunks/chunk03 allviewer_chunks/chunk04 allviewer_chunks/chunk05 allviewer_chunks/chunk06 > allviewer-project-full.b64
+          base64 -d allviewer-project-full.b64 > AllViewer-v2.0.0-source.zip
+          echo "3da7a84164b94f5b82f9e058673b3a5475bc9b8e8f2b55fd416546833689f9e2  AllViewer-v2.0.0-source.zip" | sha256sum -c -
+          unzip -q AllViewer-v2.0.0-source.zip -d allviewer
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build debug APK
+        run: gradle -p allviewer :app:assembleDebug --stacktrace
+      - name: Package APK
+        run: cp allviewer/app/build/outputs/apk/debug/app-debug.apk All-Viewer-v2.0.0.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: All-Viewer-v2.0.0-apk
+          path: All-Viewer-v2.0.0.apk
+          retention-days: 30
