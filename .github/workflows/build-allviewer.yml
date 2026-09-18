@@ -6,6 +6,11 @@ on:
     paths:
       - "allviewer_chunks/**"
       - ".github/workflows/build-allviewer.yml"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "allviewer_chunks/**"
+      - ".github/workflows/build-allviewer.yml"
   workflow_dispatch:
 
 jobs:
