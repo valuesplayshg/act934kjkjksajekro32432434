@@ -93,55 +93,51 @@ jobs:
           exit 1
 
       - name: Start Cloudflare Quick Tunnel
+        id: tunnel
         shell: bash
         run: |
           set -euo pipefail
           curl -L --fail --retry 3 -sS -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x /tmp/cloudflared
 
-          WORKING_URL=""
-          for attempt in 1 2 3; do
-            rm -f /tmp/cloudflared.log /tmp/cloudflared.pid
-            nohup /tmp/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8087 >/tmp/cloudflared.log 2>&1 &
-            echo $! >/tmp/cloudflared.pid
+          nohup /tmp/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8087 >/tmp/cloudflared.log 2>&1 &
+          echo $! >/tmp/cloudflared.pid
 
-            URL=""
-            for i in {1..60}; do
-              URL=$(grep -Eo 'https://[a-zA-Z0-9-]+\\.trycloudflare\\.com' /tmp/cloudflared.log | head -1 || true)
-              [ -n "$URL" ] && break
-              sleep 2
-            done
-
-            if [ -z "$URL" ]; then
-              kill "$(cat /tmp/cloudflared.pid)" 2>/dev/null || true
-              sleep 3
-              continue
+          URL=""
+          for i in {1..90}; do
+            URL=$(grep -Eo 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cloudflared.log | head -1 || true)
+            [ -n "$URL" ] && break
+            if ! kill -0 "$(cat /tmp/cloudflared.pid)" 2>/dev/null; then
+              echo "::error::cloudflared stopped before issuing a URL."
+              exit 1
             fi
-
-            for i in {1..45}; do
-              code=$(curl -k -sS -L -o /dev/null -w '%{http_code}' "$URL" || true)
-              if [[ "$code" =~ ^(200|301|302|401|403)$ ]]; then
-                WORKING_URL="$URL"
-                break
-              fi
-              sleep 2
-            done
-
-            [ -n "$WORKING_URL" ] && break
-            kill "$(cat /tmp/cloudflared.pid)" 2>/dev/null || true
-            sleep 3
+            sleep 2
           done
 
-          if [ -z "$WORKING_URL" ]; then
-            echo "::error::Unable to establish Cloudflare Quick Tunnel."
+          if [ -z "$URL" ]; then
+            echo "::error::Cloudflare Quick Tunnel did not issue a URL."
             exit 1
           fi
 
-          echo "CLOUDFLARE_URL=$WORKING_URL" >> "$GITHUB_ENV"
-          echo "### LT-CMS Cloudflare Preview" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "$WORKING_URL" >> "$GITHUB_STEP_SUMMARY"
-          echo "LT-CMS CLOUDFLARE URL: $WORKING_URL"
+          HOST=${URL#https://}
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "host=$HOST" >> "$GITHUB_OUTPUT"
+          echo "$URL" > /tmp/lt-cms-cloudflare-url.txt
+          echo "CLOUDFLARE_URL=$URL" >> "$GITHUB_ENV"
+          {
+            echo "### LT-CMS Cloudflare Preview"
+            echo ""
+            echo "$URL"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "LT-CMS CLOUDFLARE URL: $URL"
+
+      - name: Publish URL marker only
+        uses: actions/upload-artifact@v4
+        with:
+          name: lt-cms-url-${{ steps.tunnel.outputs.host }}
+          path: /tmp/lt-cms-cloudflare-url.txt
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Keep preview alive
         shell: bash
@@ -156,5 +152,5 @@ jobs:
           if [ -f /tmp/cloudflared.pid ]; then kill "$(cat /tmp/cloudflared.pid)" 2>/dev/null || true; fi
           if [ -f /tmp/ltcms-app.pid ]; then kill "$(cat /tmp/ltcms-app.pid)" 2>/dev/null || true; fi
           rm -rf "$GITHUB_WORKSPACE/_src"
-          rm -f /tmp/ltcms-npm.log /tmp/ltcms-maven.log /tmp/ltcms-app.log /tmp/cloudflared.log /tmp/cloudflared /tmp/cloudflared.pid /tmp/ltcms-app.pid
+          rm -f /tmp/ltcms-npm.log /tmp/ltcms-maven.log /tmp/ltcms-app.log /tmp/cloudflared.log /tmp/cloudflared /tmp/cloudflared.pid /tmp/ltcms-app.pid /tmp/lt-cms-cloudflare-url.txt
           echo "Ephemeral private source and local logs removed."
