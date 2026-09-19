@@ -1,0 +1,137 @@
+name: LT-CMS Storyboard Visual Audit
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.storyboard-audit-trigger'
+      - '.github/workflows/lt-cms-storyboard-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lt-cms-storyboard-visual-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      SOURCE_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN || secrets.token }}
+
+    steps:
+      - name: Validate private source credential
+        shell: bash
+        run: |
+          test -n "$SOURCE_TOKEN" || { echo "::error::Missing PRIVATE_REPO_TOKEN (or token)."; exit 1; }
+
+      - name: Checkout private LT-CMS ephemerally
+        uses: actions/checkout@v4
+        with:
+          repository: valuesplayshg/LT-CMS
+          ref: main
+          token: ${{ env.SOURCE_TOKEN }}
+          path: _src
+          fetch-depth: 1
+          persist-credentials: false
+          show-progress: false
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build frontend
+        working-directory: _src/frontend
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Build backend
+        working-directory: _src/backend
+        run: mvn -B -Dmaven.test.skip=true clean package
+
+      - name: Start LT-CMS with isolated audit DB
+        shell: bash
+        env:
+          CMS_DATABASE_MODE: memory
+          CMS_DATA_INIT: "true"
+          CMS_SAMPLE_INIT: "true"
+          CMS_SESSION_INIT: "true"
+          SESSION_COOKIE_SECURE: "false"
+        run: |
+          set -euo pipefail
+          JAR=$(find _src/backend/target -maxdepth 1 -name 'lt-cms-*.jar' ! -name '*.original' | head -1)
+          test -n "$JAR"
+          nohup java -jar "$JAR" > /tmp/ltcms-audit-app.log 2>&1 &
+          echo $! > /tmp/ltcms-audit-app.pid
+          for i in {1..90}; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8087/api/system/info || true)
+            if [ "$code" = "200" ]; then
+              echo "LT-CMS audit runtime started"
+              exit 0
+            fi
+            if ! kill -0 "$(cat /tmp/ltcms-audit-app.pid)" 2>/dev/null; then
+              cat /tmp/ltcms-audit-app.log
+              exit 1
+            fi
+            sleep 2
+          done
+          cat /tmp/ltcms-audit-app.log
+          exit 1
+
+      - name: Install Playwright
+        working-directory: _src/e2e
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Capture 66 storyboard pages and overlays
+        working-directory: _src/e2e
+        env:
+          LTCMS_BASE_URL: http://127.0.0.1:8087
+          LTCMS_AUDIT_DIR: ${{ github.workspace }}/storyboard-audit
+        run: npx playwright test storyboard-audit.spec.ts --config=playwright.config.ts
+
+      - name: Run functional CRUD and runtime verification
+        working-directory: _src/e2e
+        env:
+          LTCMS_BASE_URL: http://127.0.0.1:8087
+        run: npx playwright test ltcms.spec.ts --config=playwright.config.ts
+
+      - name: Write source revision
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p storyboard-audit
+          git -C _src rev-parse HEAD > storyboard-audit/source-main-sha.txt
+          cp /tmp/ltcms-audit-app.log storyboard-audit/runtime.log 2>/dev/null || true
+
+      - name: Upload screenshot audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lt-cms-storyboard-audit-${{ github.run_id }}
+          path: |
+            storyboard-audit/
+            _src/e2e/playwright-report/
+            _src/e2e/test-results/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Stop runtime and remove private source
+        if: always()
+        shell: bash
+        run: |
+          if [ -f /tmp/ltcms-audit-app.pid ]; then kill "$(cat /tmp/ltcms-audit-app.pid)" 2>/dev/null || true; fi
+          rm -rf "$GITHUB_WORKSPACE/_src"
+          rm -f /tmp/ltcms-audit-app.pid /tmp/ltcms-audit-app.log
