@@ -85,11 +85,15 @@ jobs:
             fi
             if ! kill -0 "$(cat /tmp/ltcms-app.pid)" 2>/dev/null; then
               echo "::error::LT-CMS process stopped during startup."
+              echo "===== LT-CMS APPLICATION LOG ====="
+              cat /tmp/ltcms-app.log || true
               exit 1
             fi
             sleep 2
           done
           echo "::error::LT-CMS startup timed out."
+          echo "===== LT-CMS APPLICATION LOG ====="
+          cat /tmp/ltcms-app.log || true
           exit 1
 
       - name: Start Cloudflare Quick Tunnel
