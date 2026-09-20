@@ -1,4 +1,4 @@
 restart LT-CMS admin
 frontend=Vite HMR
-reason=fully functional DB-backed menu management
-date=2026-09-21T02:14+09:00
+reason=final menu manager functional fixes
+date=2026-09-21T02:19+09:00
