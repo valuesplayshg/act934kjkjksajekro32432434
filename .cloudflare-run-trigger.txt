@@ -1,0 +1,5 @@
+LT-CMS Cloudflare preview trigger
+requested-by: ChatGPT
+requested-at: 2026-09-20T17:35:00+09:00
+source-main: bd7d73e7b7c0364138ee4140291b9c67ccfff772
+purpose: white background refresh
