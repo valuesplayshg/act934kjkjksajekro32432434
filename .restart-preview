@@ -1,4 +1,4 @@
 restart LT-CMS admin
 frontend=Vite HMR
-reason=exact sidebar menu tree type fix
-date=2026-09-21T01:35+09:00
+reason=fully functional DB-backed menu management
+date=2026-09-21T02:14+09:00
