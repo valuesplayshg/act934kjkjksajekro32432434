@@ -53,6 +53,14 @@ jobs:
           npm install --no-audit --no-fund >/tmp/ltcms-npm.log 2>&1
           echo "Frontend dependencies installed."
 
+      - name: Verify frontend TypeScript and production build
+        shell: bash
+        working-directory: _src/frontend
+        run: |
+          set -euo pipefail
+          npm run build >/tmp/ltcms-frontend-build.log 2>&1
+          echo "Frontend TypeScript/Vite build completed."
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
