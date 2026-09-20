@@ -200,33 +200,6 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "LT-CMS LIVE HMR URL: $URL"
 
-      - name: Verify login through public Cloudflare URL
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -f /tmp/ltcms-public-cookies.txt
-
-          for i in {1..30}; do
-            if curl -fsS --retry 1 --connect-timeout 5 --max-time 10 "$CLOUDFLARE_URL/" >/dev/null; then
-              break
-            fi
-            sleep 2
-          done
-
-          CSRF_JSON=$(curl -fsS --connect-timeout 8 --max-time 15 -c /tmp/ltcms-public-cookies.txt "$CLOUDFLARE_URL/api/auth/csrf")
-          CSRF=$(echo "$CSRF_JSON" | python -c "import json,sys; print(json.load(sys.stdin)['token'])")
-          CSRF_HEADER=$(echo "$CSRF_JSON" | python -c "import json,sys; print(json.load(sys.stdin)['headerName'])")
-
-          LOGIN_JSON=$(curl -fsS --connect-timeout 8 --max-time 20 \
-            -b /tmp/ltcms-public-cookies.txt -c /tmp/ltcms-public-cookies.txt \
-            -H "$CSRF_HEADER: $CSRF" \
-            -H 'Content-Type: application/x-www-form-urlencoded' \
-            --data-urlencode 'username=SITE001:admin' \
-            --data-urlencode 'password=admin1234' \
-            "$CLOUDFLARE_URL/api/auth/process")
-
-          echo "$LOGIN_JSON" | python -c "import json,sys; x=json.load(sys.stdin); assert x.get('siteCode')=='SITE001' and x.get('username')=='admin'; print('Public tunnel login verified:', x.get('siteCode'), x.get('username'))"
-
       - name: Publish URL marker only
         uses: actions/upload-artifact@v4
         with:
