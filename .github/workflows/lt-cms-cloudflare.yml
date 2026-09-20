@@ -58,7 +58,10 @@ jobs:
         working-directory: _src/frontend
         run: |
           set -euo pipefail
-          npm run build >/tmp/ltcms-frontend-build.log 2>&1
+          if ! npm run build >/tmp/ltcms-frontend-build.log 2>&1; then
+            cat /tmp/ltcms-frontend-build.log
+            exit 1
+          fi
           echo "Frontend TypeScript/Vite build completed."
 
       - name: Set up Java 17
