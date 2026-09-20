@@ -122,6 +122,24 @@ jobs:
           cat /tmp/ltcms-vite.log || true
           exit 1
 
+      - name: Verify login through Vite proxy
+        shell: bash
+        run: |
+          set -euo pipefail
+          PASS=$(sed -n "s/.*--data-urlencode 'password=\([^']*\)'.*/\1/p" _src/.github/workflows/ci-main.yml | head -1)
+          test -n "$PASS"
+          rm -f /tmp/ltcms-auth-cookies.txt
+          CSRF_JSON=$(curl -fsS -c /tmp/ltcms-auth-cookies.txt http://127.0.0.1:5173/api/auth/csrf)
+          CSRF=$(printf '%s' "$CSRF_JSON" | python -c "import json,sys; print(json.load(sys.stdin)['token'])")
+          HEADER=$(printf '%s' "$CSRF_JSON" | python -c "import json,sys; print(json.load(sys.stdin)['headerName'])")
+          curl -fsS -L -b /tmp/ltcms-auth-cookies.txt -c /tmp/ltcms-auth-cookies.txt \
+            -H "$HEADER: $CSRF" -H 'Content-Type: application/x-www-form-urlencoded' \
+            --data-urlencode 'username=SITE001:admin' --data-urlencode "password=$PASS" \
+            http://127.0.0.1:5173/api/auth/process >/tmp/ltcms-login.json
+          SESSION=$(curl -fsS -b /tmp/ltcms-auth-cookies.txt http://127.0.0.1:5173/api/auth/session)
+          printf '%s' "$SESSION" | python -c "import json,sys; d=json.load(sys.stdin); assert d.get('siteCode')=='SITE001' and d.get('username')=='admin'"
+          echo "Vite proxy login verified."
+
       - name: Start live frontend source sync
         shell: bash
         run: |
