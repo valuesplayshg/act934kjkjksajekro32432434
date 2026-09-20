@@ -1,4 +1,4 @@
 restart LT-CMS admin
 frontend=Vite HMR
-reason=fix menu manager initial state and storyboard tree
-date=2026-09-21T01:18+09:00
+reason=menu tree exact sidebar catalog
+date=2026-09-21T01:29+09:00
