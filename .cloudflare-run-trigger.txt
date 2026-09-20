@@ -1,5 +1,3 @@
-LT-CMS Cloudflare preview trigger
-requested-by: ChatGPT
-requested-at: 2026-09-20T17:42:00+09:00
-source-main: 5d625b845e644c71d55fe6119bf8d01b28bbdab3
-purpose: remove pale blue initial loader background
+LT-CMS Cloudflare restart
+Reason: loading screen viewport centering fix
+Date: 2026-09-20
