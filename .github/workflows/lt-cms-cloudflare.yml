@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 concurrency:
   group: lt-cms-private-cloudflare-preview
@@ -142,6 +143,36 @@ jobs:
           path: /tmp/lt-cms-cloudflare-url.txt
           if-no-files-found: error
           retention-days: 1
+
+      - name: Publish preview URL as commit status
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          url = os.environ["CLOUDFLARE_URL"]
+          api = f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/statuses/{os.environ['GITHUB_SHA']}"
+          payload = json.dumps({
+              "state": "success",
+              "target_url": url,
+              "description": "LT-CMS admin preview is live",
+              "context": "lt-cms/cloudflare-preview"
+          }).encode()
+          req = urllib.request.Request(
+              api,
+              data=payload,
+              method="POST",
+              headers={
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "Content-Type": "application/json"
+              }
+          )
+          with urllib.request.urlopen(req) as r:
+              print(r.read().decode())
+          PY
 
       - name: Keep preview alive
         shell: bash
