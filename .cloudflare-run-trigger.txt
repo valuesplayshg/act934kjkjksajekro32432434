@@ -1,4 +1,4 @@
 LT-CMS Cloudflare restart
-Reason: storyboard first-level menu order persistence verification
-Source commit: 20fd9ba21fcc67b6a6c2717baafbdf3960e5fc32
+Reason: menu permission tree + CRUD authority screen verification
+Source commit: f151dbbc747fd4234ab353c3c8746e980bdf0112
 Date: 2026-09-21
