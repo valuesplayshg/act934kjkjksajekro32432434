@@ -1,3 +1,4 @@
 LT-CMS Cloudflare restart
-Reason: loading screen viewport centering fix
-Date: 2026-09-20
+Reason: storyboard first-level menu order persistence verification
+Source commit: 20fd9ba21fcc67b6a6c2717baafbdf3960e5fc32
+Date: 2026-09-21
