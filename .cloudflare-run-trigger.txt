@@ -1,4 +1,4 @@
 LT-CMS Cloudflare restart
-Reason: menu permission tree + CRUD authority screen verification
-Source commit: f151dbbc747fd4234ab353c3c8746e980bdf0112
+Reason: restart Vite frontend administrator preview
+Source commit: df144ecb5854dfe4ea0c5a0f4984b9b3d9b3ef3a
 Date: 2026-09-21
