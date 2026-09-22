@@ -194,24 +194,40 @@ jobs:
           curl -L --fail --retry 3 -sS -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x /tmp/cloudflared
 
-          nohup /tmp/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:5173 >/tmp/cloudflared.log 2>&1 &
-          echo $! >/tmp/cloudflared.pid
-
           URL=""
-          for i in {1..90}; do
-            URL=$(grep -Eo 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cloudflared.log | head -1 || true)
-            [ -n "$URL" ] && break
-            if ! kill -0 "$(cat /tmp/cloudflared.pid)" 2>/dev/null; then
-              echo "::error::cloudflared stopped before issuing a URL."
-              cat /tmp/cloudflared.log || true
-              exit 1
+          for attempt in 1 2 3; do
+            rm -f /tmp/cloudflared.log /tmp/cloudflared.pid
+            nohup /tmp/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:5173 >/tmp/cloudflared.log 2>&1 &
+            echo $! >/tmp/cloudflared.pid
+
+            CANDIDATE=""
+            for i in {1..60}; do
+              # The API endpoint may appear in error logs; it is NOT a tunnel URL.
+              CANDIDATE=$(grep -Eo 'https://[a-zA-Z0-9-]+\\.trycloudflare\\.com' /tmp/cloudflared.log | grep -vE '^https://(api|www)\\.trycloudflare\\.com$' | head -1 || true)
+              [ -n "$CANDIDATE" ] && break
+              if ! kill -0 "$(cat /tmp/cloudflared.pid)" 2>/dev/null; then break; fi
+              sleep 2
+            done
+
+            if [ -n "$CANDIDATE" ]; then
+              for i in {1..12}; do
+                if curl -fsS -L --connect-timeout 5 --max-time 15 "$CANDIDATE/api/system/info" 2>/dev/null | python -c 'import json,sys; assert isinstance(json.load(sys.stdin), dict)' 2>/dev/null; then
+                  URL="$CANDIDATE"
+                  break
+                fi
+                sleep 2
+              done
             fi
-            sleep 2
+
+            [ -n "$URL" ] && break
+            echo "::warning::Tunnel attempt $attempt did not yield a healthy public LT-CMS endpoint."
+            kill "$(cat /tmp/cloudflared.pid)" 2>/dev/null || true
+            sleep 3
           done
 
           if [ -z "$URL" ]; then
-            echo "::error::Cloudflare Quick Tunnel did not issue a URL."
-            cat /tmp/cloudflared.log || true
+            echo "::error::No externally verified Cloudflare Quick Tunnel URL."
+            tail -30 /tmp/cloudflared.log || true
             exit 1
           fi
 
