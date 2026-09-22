@@ -203,7 +203,7 @@ jobs:
             CANDIDATE=""
             for i in {1..60}; do
               # The API endpoint may appear in error logs; it is NOT a tunnel URL.
-              CANDIDATE=$(grep -Eo 'https://[a-zA-Z0-9-]+\\.trycloudflare\\.com' /tmp/cloudflared.log | grep -vE '^https://(api|www)\\.trycloudflare\\.com$' | head -1 || true)
+              CANDIDATE=$(grep -Eo 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cloudflared.log | grep -vE '^https://(api|www)\.trycloudflare\.com$' | head -1 || true)
               [ -n "$CANDIDATE" ] && break
               if ! kill -0 "$(cat /tmp/cloudflared.pid)" 2>/dev/null; then break; fi
               sleep 2
