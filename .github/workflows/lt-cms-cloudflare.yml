@@ -151,6 +151,17 @@ jobs:
           printf '%s' "$SESSION" | python -c "import json,sys; d=json.load(sys.stdin); assert d.get('siteCode')=='SITE001' and d.get('username')=='admin'"
           echo "Vite proxy login verified."
 
+      - name: Browser verify menu permission storyboard and CRUD
+        working-directory: _src/e2e
+        env:
+          LTCMS_BASE_URL: http://127.0.0.1:5173
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund >/tmp/ltcms-playwright-install.log 2>&1
+          npx playwright install --with-deps chromium >/tmp/ltcms-playwright-browser.log 2>&1
+          npx playwright test ltcms.spec.ts -g '메뉴권한 스토리보드 3열 및 CRUD 저장·재조회 검증' --reporter=line
+
       - name: Start live frontend source sync
         shell: bash
         run: |
