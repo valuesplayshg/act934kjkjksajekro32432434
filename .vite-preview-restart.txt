@@ -1,3 +1,3 @@
-LT-CMS menu permission storyboard alignment validation
+LT-CMS storyboard menu permission final validation (tree/table/matrix/pagination)
 2026-09-23 Asia/Seoul
-Run frontend TypeScript/Vite build and private backend login verification. Keep private source ephemeral.
+Build from private main and start Vite live preview; no private source stored in public repository.
