@@ -1,3 +1,3 @@
-LT-CMS actual browser regression verification rerun
+LT-CMS storyboard multi-menu alignment verification (common code and hierarchy)
 2026-09-23 Asia/Seoul
-Use current private-source login form selector, run menu permission test, and publish only the verified tunnel URL.
+Build private main and execute login and existing browser checks.
