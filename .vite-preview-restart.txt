@@ -1,3 +1,3 @@
-LT-CMS storyboard menu permission final validation (tree/table/matrix/pagination)
+LT-CMS actual browser regression verification rerun
 2026-09-23 Asia/Seoul
-Build from private main and start Vite live preview; no private source stored in public repository.
+Use current private-source login form selector, run menu permission test, and publish only the verified tunnel URL.
