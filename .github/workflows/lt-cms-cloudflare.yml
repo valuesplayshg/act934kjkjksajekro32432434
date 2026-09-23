@@ -162,6 +162,27 @@ jobs:
           npx playwright install --with-deps chromium >/tmp/ltcms-playwright-browser.log 2>&1
           npx playwright test ltcms.spec.ts -g '메뉴권한 스토리보드 3열 및 CRUD 저장·재조회 검증|공통코드와 단계형 코드 스토리보드 CRUD 검증' --reporter=line
 
+      - name: Capture all storyboard menu screens
+        working-directory: _src/e2e
+        env:
+          LTCMS_BASE_URL: http://127.0.0.1:5173
+          LTCMS_AUDIT_DIR: storyboard-audit
+        shell: bash
+        run: |
+          npx playwright test storyboard-audit.spec.ts -g '전체 메뉴 화면 캡처 - 오류 화면도 누락 없이 수집' --reporter=line
+
+      # Only rendered UI screenshots and the index are exported; never source files.
+      - name: Upload screenshot evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lt-cms-storyboard-screens-${{ github.run_id }}
+          path: |
+            _src/e2e/storyboard-audit/full-menu/
+            _src/e2e/storyboard-audit/full-menu-index.json
+          if-no-files-found: warn
+          retention-days: 1
+
       - name: Start live frontend source sync
         shell: bash
         run: |
