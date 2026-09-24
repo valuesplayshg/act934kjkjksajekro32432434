@@ -1,0 +1,1 @@
+Restart LT-CMS Vite preview from private main to validate real Studio image attachment, block JSON persistence, and draft preview. Public repository stores no source.
