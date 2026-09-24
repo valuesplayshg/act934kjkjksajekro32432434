@@ -1,0 +1,1 @@
+Run the latest private LT-CMS main. Validate Content permission tab order and per-target rights, and newest-first registration across shared CRUD and site-scoped API. Public action repository only stores this trigger; private source stays ephemeral on the runner.
