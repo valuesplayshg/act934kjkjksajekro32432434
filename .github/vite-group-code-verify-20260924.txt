@@ -1,0 +1,1 @@
+Verify common-code group registration, persistence after reload, newest-first ordering. Private source checked out ephemerally.
