@@ -1,0 +1,1 @@
+Restart LT-CMS Vite HMR preview after group-code persistence fix. Private source remains ephemeral on the Actions runner.
