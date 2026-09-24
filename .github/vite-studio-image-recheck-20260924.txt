@@ -1,0 +1,1 @@
+Run Vite Content Studio file-backed image upload, preview and persistence checks with bounded assertions. Private source exists only in ephemeral runner.
