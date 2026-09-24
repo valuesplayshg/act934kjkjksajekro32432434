@@ -1,0 +1,4 @@
+LT-CMS Vite live preview restart marker
+Source: private valuesplayshg/LT-CMS main
+Public action repository contains no private source files.
+Requested: 2026-09-24
