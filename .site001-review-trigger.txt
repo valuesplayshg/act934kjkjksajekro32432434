@@ -1,0 +1,1 @@
+2026-09-27 KST | Verify private LT-CMS main (SITE001 real linked data, popup 24h checkbox, legacy routes) using ephemeral runner only. Do not publish private source.
