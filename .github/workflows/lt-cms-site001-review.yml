@@ -98,7 +98,7 @@ jobs:
           set -euo pipefail
           npm install --no-audit --no-fund >/tmp/site001-e2e-npm.log 2>&1
           npx playwright install --with-deps chromium >/tmp/site001-browser.log 2>&1
-          if ! npx playwright test ltcms.spec.ts -g 'SITE001 실제 페이지|SITE001 12가지 기능|SITE001 설문 응답|사이트 목록 매뉴얼에 12가지|SITE001 컨텐츠 Studio|SITE001 배너·이미지' --reporter=line >/tmp/site001-e2e-results.log 2>&1; then
+          if ! npx playwright test ltcms.spec.ts -g 'SITE001 실제 페이지|SITE001 12가지 기능|SITE001 설문 응답|SITE001 설문 화면|사이트 목록 매뉴얼에 12가지|SITE001 컨텐츠 Studio|SITE001 배너·이미지' --reporter=line >/tmp/site001-e2e-results.log 2>&1; then
             echo "::error::SITE001 browser verification failed; source and trace remain only on ephemeral runner."
             grep -E '^  [0-9]+ failed|^  [0-9]+ passed|^    ltcms\.spec\.ts:[0-9]+:[0-9]+|Test timeout|Error:|Locator:|Expected|Received|SITE001_SURVEY_DIAGNOSTIC' /tmp/site001-e2e-results.log | head -30 || true
             exit 1
