@@ -1,3 +1,5 @@
 2026-09-26 20:51 KST | SITE001 end-to-end integrated preview review: site details/logo/maintenance/feature switches/board/member/popup/edit controls. Vite 5173 with private source in ephemeral runner only; do not publish private source.
 
 SITE001 site integration verification refresh 2026-09-26 release candidate; source checkout remains ephemeral.
+
+Latest SITE001 integrated preview rebuild after CSS TypeScript fix; ephemeral Vite and Cloudflare run.
