@@ -10,7 +10,7 @@ permissions:
   statuses: write
 
 concurrency:
-  group: lt-cms-private-cloudflare-preview-groupcode-260924
+  group: lt-cms-private-cloudflare-preview-studio-delete-260926
   cancel-in-progress: true
 
 jobs:
