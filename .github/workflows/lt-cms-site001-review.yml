@@ -98,7 +98,12 @@ jobs:
           set -euo pipefail
           npm install --no-audit --no-fund >/tmp/site001-e2e-npm.log 2>&1
           npx playwright install --with-deps chromium >/tmp/site001-browser.log 2>&1
-          npx playwright test ltcms.spec.ts -g 'SITE001 실제 페이지|SITE001 12가지 기능|SITE001 설문 응답|사이트 목록 매뉴얼에 12가지|SITE001 컨텐츠 Studio' --reporter=line
+          if ! npx playwright test ltcms.spec.ts -g 'SITE001 실제 페이지|SITE001 12가지 기능|SITE001 설문 응답|사이트 목록 매뉴얼에 12가지|SITE001 컨텐츠 Studio' --reporter=line >/tmp/site001-e2e-results.log 2>&1; then
+            echo "::error::SITE001 browser verification failed; source and trace remain only on ephemeral runner."
+            grep -E '^  [0-9]+ failed|^  [0-9]+ passed|^    ltcms\.spec\.ts:[0-9]+:[0-9]+|Test timeout|expect\(locator\)' /tmp/site001-e2e-results.log | head -20 || true
+            exit 1
+          fi
+          grep -E '^[[:space:]]*[0-9]+ passed' /tmp/site001-e2e-results.log | tail -1 || echo 'SITE001 browser verification PASS.'
       - name: Remove ephemeral private source and runtime
         if: always()
         shell: bash
