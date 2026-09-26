@@ -160,7 +160,7 @@ jobs:
           set -euo pipefail
           npm install --no-audit --no-fund >/tmp/ltcms-playwright-install.log 2>&1
           npx playwright install --with-deps chromium >/tmp/ltcms-playwright-browser.log 2>&1
-          npx playwright test ltcms.spec.ts -g '메뉴권한 스토리보드 3열 및 CRUD 저장·재조회 검증|공통코드와 단계형 코드 스토리보드 CRUD 검증|부서관리 스토리보드 트리 목록 CRUD 저장|컨텐츠 권한 대상별·신규 등록 맨앞 검증|컨텐츠 Studio 이미지 첨부 및 우측상단 미리보기·재조회|로그인 직후 기초관리 닫힘 상태|SITE001 사이트 통합관리 기본정보·프리뷰·기능 토글과 새로고침|SITE001 정기점검 활성 기간은 새창에서 전체 안내 화면으로 전환|SITE001 로고 첨부 후 미리보기 적용·삭제 및 원상복구|SITE001 컨텐츠 Studio 페이지는 사이트 미리보기에서 실제 게시 상태와 본문을 사용한다|SITE001 편집모드 모든 편집 버튼 한줄 및 글자색 검증' --reporter=line
+          npx playwright test ltcms.spec.ts -g '메뉴권한 스토리보드 3열 및 CRUD 저장·재조회 검증|공통코드와 단계형 코드 스토리보드 CRUD 검증|부서관리 스토리보드 트리 목록 CRUD 저장|컨텐츠 권한 대상별·신규 등록 맨앞 검증|컨텐츠 Studio 이미지 첨부 및 우측상단 미리보기·재조회|로그인 직후 기초관리 닫힘 상태|SITE001 사이트 통합관리 기본정보·프리뷰·기능 토글과 새로고침|SITE001 정기점검 활성 기간은 새창에서 전체 안내 화면으로 전환|SITE001 로고 첨부 후 미리보기 적용·삭제 및 원상복구|SITE001 컨텐츠 Studio 페이지는 사이트 미리보기에서 실제 게시 상태와 본문을 사용한다|SITE001 편집모드 모든 편집 버튼 한줄 및 글자색 검증|SITE001 공개 사이트 문의 접수는 운영지원 테이블에 연동된다' --reporter=line
 
       - name: Capture all storyboard menu screens
         working-directory: _src/e2e
