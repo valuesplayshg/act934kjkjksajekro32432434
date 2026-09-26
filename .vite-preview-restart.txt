@@ -2,3 +2,5 @@ LT-CMS v1.0 administrator Vite preview: content permission hierarchy, sample tre
 Private source main in ephemeral runner, Vite 5173 and Cloudflare Quick Tunnel.
 Do not publish private source to this public actions repository.
 2026-09-26 content permission update.
+
+Patch sync: refresh after source commit fab445c11a7678d0e05ee216acc90d2c8b952ea5; validate sample registration notice and content permissions.
