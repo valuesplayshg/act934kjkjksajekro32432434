@@ -1,0 +1,108 @@
+name: LT-CMS SITE001 Branch Review
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.site001-review-trigger.txt'
+      - '.github/workflows/lt-cms-site001-review.yml'
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Private LT-CMS branch or SHA for review
+        required: true
+        default: fix/site001-preview-consistency-260926
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lt-cms-site001-review
+  cancel-in-progress: true
+
+jobs:
+  site001:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SESSION_COOKIE_SECURE: "false"
+      CMS_SAMPLE_INIT: "true"
+      CMS_DATA_INIT: "true"
+      CMS_DATABASE_MODE: "memory"
+    steps:
+      - name: Validate private source credential
+        env:
+          SOURCE_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+        run: |
+          test -n "$SOURCE_TOKEN" || { echo "::error::Private repository read token missing"; exit 1; }
+      - name: Checkout private source only into ephemeral runner
+        uses: actions/checkout@v4
+        with:
+          repository: valuesplayshg/LT-CMS
+          ref: ${{ github.event.inputs.source_ref || 'fix/site001-preview-consistency-260926' }}
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          path: _src
+          persist-credentials: false
+          show-progress: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify private TypeScript and Vite build
+        working-directory: _src/frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund >/tmp/site001-npm.log 2>&1
+          if ! npm run build >/tmp/site001-build.log 2>&1; then
+            echo "::error::Private frontend build failed"
+            grep -E 'error TS[0-9]+:' /tmp/site001-build.log | head -30 || true
+            exit 1
+          fi
+          echo "Frontend TypeScript and Vite build PASS."
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+          cache-dependency-path: _src/backend/pom.xml
+      - name: Build private backend
+        working-directory: _src/backend
+        shell: bash
+        run: |
+          mvn -q -B -Dmaven.test.skip=true clean package >/tmp/site001-maven.log 2>&1 || { echo "::error::Backend build failed; private log kept on runner only"; exit 1; }
+      - name: Start backend and Vite
+        shell: bash
+        run: |
+          set -euo pipefail
+          JAR=$(find _src/backend/target -maxdepth 1 -name 'lt-cms-*.jar' ! -name '*.original' | head -1)
+          test -n "$JAR"
+          nohup java -jar "$JAR" >/tmp/site001-app.log 2>&1 &
+          for i in {1..90}; do
+            if curl -fsS http://127.0.0.1:8087/api/system/info >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8087/api/system/info >/dev/null
+          cd _src/frontend
+          nohup npm run dev -- --host 127.0.0.1 --port 5173 >/tmp/site001-vite.log 2>&1 &
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:5173/api/system/info >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:5173/api/system/info >/dev/null
+      - name: Browser review of SITE001 and all twelve ON/OFF controls
+        working-directory: _src/e2e
+        shell: bash
+        env:
+          LTCMS_BASE_URL: http://127.0.0.1:5173
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund >/tmp/site001-e2e-npm.log 2>&1
+          npx playwright install --with-deps chromium >/tmp/site001-browser.log 2>&1
+          npx playwright test ltcms.spec.ts -g 'SITE001 실제 페이지|SITE001 12가지 기능|SITE001 설문 응답|사이트 목록 매뉴얼에 12가지|SITE001 컨텐츠 Studio' --reporter=line
+      - name: Remove ephemeral private source and runtime
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$GITHUB_WORKSPACE/_src"
+          rm -f /tmp/site001-*.log /tmp/site001-*.pid
+          echo "Private source and logs removed. No source checkout or archive is committed to the public repository."
