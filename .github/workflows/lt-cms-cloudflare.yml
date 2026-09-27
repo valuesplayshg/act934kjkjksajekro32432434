@@ -154,6 +154,7 @@ jobs:
       # Run diagnostics without taking down the explicitly requested live Vite preview.
       # Failing checks stay red in logs; deployment is not claimed as QA-approved.
       - name: Browser verify menu permission storyboard and CRUD
+        id: site_smoke
         continue-on-error: true
         working-directory: _src/e2e
         env:
@@ -295,6 +296,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          SITE_SMOKE_OUTCOME: ${{ steps.site_smoke.outcome }}
         run: |
           python - <<'PY'
           import json, os, urllib.request
@@ -303,7 +305,7 @@ jobs:
           payload = json.dumps({
               "state": "success",
               "target_url": url,
-              "description": "LT-CMS live HMR preview is active",
+              "description": f"LT-CMS live HMR; SITE001 browser smoke: {os.environ.get('SITE_SMOKE_OUTCOME','unknown')}",
               "context": "lt-cms/cloudflare-preview"
           }).encode()
           req = urllib.request.Request(
