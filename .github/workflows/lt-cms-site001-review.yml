@@ -70,6 +70,17 @@ jobs:
         shell: bash
         run: |
           mvn -q -B -Dmaven.test.skip=true clean package >/tmp/site001-maven.log 2>&1 || { echo "::error::Backend build failed; private log kept on runner only"; exit 1; }
+      - name: Run private backend integration tests
+        working-directory: _src/backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! mvn -q -B test >/tmp/site001-java-tests.log 2>&1; then
+            echo "::error::Backend integration tests failed; detailed source and logs remain on ephemeral runner."
+            grep -E 'Tests run:|Failures:|Errors:|BUILD FAILURE|There are test failures' /tmp/site001-java-tests.log | tail -25 || true
+            exit 1
+          fi
+          echo "Backend integration tests PASS."
       - name: Start backend and Vite
         shell: bash
         run: |
@@ -104,6 +115,19 @@ jobs:
             exit 1
           fi
           grep -E '^[[:space:]]*[0-9]+ passed' /tmp/site001-e2e-results.log | tail -1 || echo 'SITE001 browser verification PASS.'
+      - name: Full LT-CMS browser menu and CRUD regression
+        working-directory: _src/e2e
+        shell: bash
+        env:
+          LTCMS_BASE_URL: http://127.0.0.1:5173
+        run: |
+          set -euo pipefail
+          if ! npx playwright test ltcms.spec.ts --reporter=line >/tmp/site001-full-e2e.log 2>&1; then
+            echo "::error::Full LT-CMS browser regression failed; detailed private traces stay on runner."
+            grep -E '^  [0-9]+ failed|^  [0-9]+ passed|^    ltcms\\.spec\\.ts:[0-9]+:[0-9]+|Test timeout' /tmp/site001-full-e2e.log | head -24 || true
+            exit 1
+          fi
+          grep -E '^[[:space:]]*[0-9]+ passed' /tmp/site001-full-e2e.log | tail -1 || echo "Full LT-CMS browser regression PASS."
       - name: Remove ephemeral private source and runtime
         if: always()
         shell: bash
