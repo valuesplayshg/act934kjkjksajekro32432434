@@ -163,7 +163,7 @@ jobs:
           set -euo pipefail
           npm install --no-audit --no-fund >/tmp/ltcms-playwright-install.log 2>&1
           npx playwright install --with-deps chromium >/tmp/ltcms-playwright-browser.log 2>&1
-          npx playwright test ltcms.spec.ts -g '관리자 좌측 메뉴 클릭 시 대시보드로 복귀하지 않고 해당 화면과 URL이 유지된다' --reporter=line
+          npx playwright test ltcms.spec.ts -g '관리자 좌측 메뉴 클릭 시 대시보드로 복귀하지 않고 해당 화면과 URL이 유지된다|SITE001 파일관리 메뉴 클릭|SITE001 메뉴관리 첫 화면|SITE001 메뉴담당은|SITE001 기본 디자인|SITE001 회원 상세에서 비밀번호' --reporter=line
 
       # Full 66-menu screenshots run in the separate review workflow, not the live preview.
       - name: Capture all storyboard menu screens
