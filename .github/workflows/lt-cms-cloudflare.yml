@@ -333,3 +333,5 @@ jobs:
           rm -f /tmp/ltcms-*.log /tmp/ltcms-*.pid /tmp/ltcms-last-source-sha /tmp/lt-cms-cloudflare-url.txt
           rm -f /tmp/cloudflared /tmp/cloudflared.log /tmp/cloudflared.pid
           echo "Ephemeral private source and runtime files removed."
+
+# SITE001 shared top-toolbar and board context verification; source remains private on ephemeral runner.
