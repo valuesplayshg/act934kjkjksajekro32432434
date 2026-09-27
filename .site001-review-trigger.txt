@@ -4,3 +4,5 @@
 2026-09-27 | Full LT-CMS main regression after linked sample, read-only test, and classification reference corrections. No private source export.
 
 2026-09-27 | Full main regression with special eGov site access log integration test, source ephemeral.
+
+2026-09-27 | Full private main regression; show only sanitized failure test identifiers; preserve source isolation.
