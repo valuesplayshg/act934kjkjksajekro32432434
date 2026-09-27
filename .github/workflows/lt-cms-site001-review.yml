@@ -78,6 +78,7 @@ jobs:
           if ! mvn -q -B test >/tmp/site001-java-tests.log 2>&1; then
             echo "::error::Backend integration tests failed; detailed source and logs remain on ephemeral runner."
             grep -E 'Tests run:|Failures:|Errors:|BUILD FAILURE|There are test failures' /tmp/site001-java-tests.log | tail -25 || true
+            python -c 'import glob,xml.etree.ElementTree as E; files=glob.glob("target/surefire-reports/TEST-*.xml"); print("CI_TEST_DIAGNOSTICS",len(files)); [(print("CI_TEST_FAILED class="+c.get("classname","").split(".")[-1]+" method="+c.get("name","")+" type="+r.get("type","").split(".")[-1])) for f in files for c in E.parse(f).getroot().iter("testcase") for r in c if r.tag in ("failure","error")]'
             exit 1
           fi
           echo "Backend integration tests PASS."
