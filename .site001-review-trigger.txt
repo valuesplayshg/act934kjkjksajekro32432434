@@ -1,2 +1,4 @@
 2026-09-27 KST | Verify private LT-CMS main (SITE001 real linked data, popup 24h checkbox, legacy routes) using ephemeral runner only. Do not publish private source.
 2026-09-27 KST | Verify main with popup dismissal after /main and multi-popup 24h persistence. Ephemeral runner; no private source artifacts.
+
+2026-09-27 | Full LT-CMS main regression after linked sample, read-only test, and classification reference corrections. No private source export.
