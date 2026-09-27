@@ -126,7 +126,7 @@ jobs:
           if ! npx playwright test ltcms.spec.ts --reporter=line >/tmp/site001-full-e2e.log 2>&1; then
             echo "::error::Full LT-CMS browser regression failed; detailed private traces stay on runner."
             # Sanitized failing test identifiers; private source and traces remain ephemeral.
-            python -c 'import re; x=open("/tmp/site001-full-e2e.log",errors="replace").read(); x=re.sub(r"\\x1b\\[[0-9;]*[A-Za-z]","",x); lines=x.splitlines(); [print("CI_BROWSER "+z[:230]) for z in lines if re.search(r"\\d+ failed|\\d+ passed|\\s\\d+\\) \\[chromium\\].*›",z)][-40:]' || true
+            python -c 'import re; x=open("/tmp/site001-full-e2e.log",errors="replace").read(); x=re.sub(r"\x1b\[[0-9;]*[A-Za-z]","",x); lines=x.splitlines(); [print("CI_BROWSER "+z[:230]) for z in lines if re.search(r"\d+ failed|\d+ passed|\s\d+\) \[chromium\].*›",z)][-40:]' || true
             exit 1
           fi
           grep -E '^[[:space:]]*[0-9]+ passed' /tmp/site001-full-e2e.log | tail -1 || echo "Full LT-CMS browser regression PASS."
