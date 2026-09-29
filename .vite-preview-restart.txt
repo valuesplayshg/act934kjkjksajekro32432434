@@ -1,2 +1,5 @@
-2026-09-27 KST | Restart LT-CMS Vite administrator from private source main e0d69f7a2ea8131bcb31dfbdd0c5b4e383c08bf2.
-Source is checked out only into the ephemeral Actions runner. Never commit private source, credentials, or runtime artifacts to this public repository.
+LT-CMS Vite preview restart requested
+2026-09-29 10:00 KST
+source: valuesplayshg/LT-CMS main
+frontend: Vite :5173
+publish: Cloudflare Quick Tunnel
