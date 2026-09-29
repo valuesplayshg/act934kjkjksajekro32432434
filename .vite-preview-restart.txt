@@ -1,5 +1,4 @@
-LT-CMS Vite preview restart requested
-2026-09-29 10:00 KST
+LT-CMS Vite preview restart after site-management refinement
+2026-09-29 11:12 KST
 source: valuesplayshg/LT-CMS main
-frontend: Vite :5173
-publish: Cloudflare Quick Tunnel
+checks: frontend build + backend + Vite proxy + existing browser smoke
