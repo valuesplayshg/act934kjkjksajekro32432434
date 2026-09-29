@@ -1,4 +1,4 @@
-LT-CMS build verification trigger
-2026-09-29 11:14 KST
-source: valuesplayshg/LT-CMS main
-reason: site-management refinement build verification
+LT-CMS final site-management build verification
+2026-09-29 11:17 KST
+source commit: 925f6ee1e9c92241fccac2ea862fcad649cb82dc
+checks: final frontend build + backend boot
