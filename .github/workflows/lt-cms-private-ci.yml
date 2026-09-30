@@ -1,0 +1,144 @@
+name: LT-CMS Private Main CI
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/lt-cms-private-ci.yml'
+      - '.lt-cms-ci-trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lt-cms-private-main-ci
+  cancel-in-progress: true
+
+jobs:
+  verify-private-main:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SOURCE_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN || secrets.token }}
+      CMS_DATABASE_MODE: memory
+      CMS_SAMPLE_INIT: "true"
+      CMS_DATA_INIT: "true"
+      SESSION_COOKIE_SECURE: "false"
+
+    steps:
+      - name: Validate private source credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SOURCE_TOKEN" || { echo "::error::PRIVATE_REPO_TOKEN (or token) is required."; exit 1; }
+
+      - name: Checkout private LT-CMS main ephemerally
+        uses: actions/checkout@v4
+        with:
+          repository: valuesplayshg/LT-CMS
+          ref: main
+          token: ${{ env.SOURCE_TOKEN }}
+          path: _src
+          fetch-depth: 1
+          persist-credentials: false
+          show-progress: false
+
+      - name: Record private source SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_SHA=$(git -C _src rev-parse HEAD)
+          echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
+          echo "Private LT-CMS source commit: $SOURCE_SHA"
+
+      - name: Verify eGovFrame 5.0 source structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q '<artifactId>egovframe-boot-starter-parent</artifactId>' _src/backend/pom.xml
+          grep -q '<version>5.0.0</version>' _src/backend/pom.xml
+          grep -R -q 'extends EgovAbstractServiceImpl' _src/backend/src/main/java/com/ltcms
+          grep -R -q 'extends EgovAbstractMapper' _src/backend/src/main/java/com/ltcms
+          grep -R -q 'EgovUserDetailsHelper' _src/backend/src/main/java/com/ltcms
+          grep -R -q 'EgovExcelService' _src/backend/src/main/java/com/ltcms
+          grep -q '@Import(EgovSecurityConfiguration.class)' _src/backend/src/main/java/com/ltcms/EgovRuntimeConfig.java
+          test -f _src/docs/COMPATIBILITY_GUIDE_PRECHECK_20260930.md
+          test -f _src/docs/EGOVFRAME_5_COMPLIANCE_POLICY.md
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Frontend TypeScript and Vite build
+        working-directory: _src/frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          npm run build
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          cache-dependency-path: _src/backend/pom.xml
+
+      - name: Backend full tests and package
+        working-directory: _src/backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          mvn -B clean test package
+
+      - name: Start packaged LT-CMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          JAR=$(find _src/backend/target -maxdepth 1 -name 'lt-cms-*.jar' ! -name '*.original' | head -1)
+          test -n "$JAR"
+          nohup java -jar "$JAR" >/tmp/ltcms-ci-app.log 2>&1 &
+          echo $! >/tmp/ltcms-ci-app.pid
+          for i in {1..90}; do
+            if curl -fsS http://127.0.0.1:8087/api/system/info >/tmp/ltcms-system.json; then
+              cat /tmp/ltcms-system.json
+              exit 0
+            fi
+            if ! kill -0 "$(cat /tmp/ltcms-ci-app.pid)" 2>/dev/null; then
+              cat /tmp/ltcms-ci-app.log
+              exit 1
+            fi
+            sleep 2
+          done
+          cat /tmp/ltcms-ci-app.log
+          exit 1
+
+      - name: Publish CI status to private source commit
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set +e
+          [ -n "${SOURCE_SHA:-}" ] || exit 0
+          STATE=failure
+          [ "$JOB_STATUS" = "success" ] && STATE=success
+          DESC="Public runner CI for private LT-CMS main: $JOB_STATUS"
+          HTTP=$(curl -sS -o /tmp/status-response.json -w '%{http_code}'             -X POST "https://api.github.com/repos/valuesplayshg/LT-CMS/statuses/$SOURCE_SHA"             -H "Authorization: Bearer $SOURCE_TOKEN"             -H "Accept: application/vnd.github+json"             -H "X-GitHub-Api-Version: 2022-11-28"             -d "{\"state\":\"$STATE\",\"context\":\"lt-cms/public-runner-ci\",\"description\":\"$DESC\",\"target_url\":\"https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}")
+          if [ "$HTTP" != "201" ]; then
+            echo "::warning::Could not publish private commit status (HTTP $HTTP). CI result itself is unaffected."
+            cat /tmp/status-response.json || true
+          fi
+
+      - name: Secure cleanup
+        if: always()
+        shell: bash
+        run: |
+          if [ -f /tmp/ltcms-ci-app.pid ]; then kill "$(cat /tmp/ltcms-ci-app.pid)" 2>/dev/null || true; fi
+          rm -rf "$GITHUB_WORKSPACE/_src"
+          rm -f /tmp/ltcms-ci-app.log /tmp/ltcms-ci-app.pid /tmp/ltcms-system.json /tmp/status-response.json
+          echo "Private source removed from ephemeral runner; nothing is committed or uploaded."
