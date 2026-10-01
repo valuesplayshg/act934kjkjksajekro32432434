@@ -145,17 +145,7 @@ jobs:
           # Public Actions repo: encrypt DB before upload. Only the matching private key can decrypt it.
           openssl rand -base64 48 | tr -d '\n' > /tmp/ltcms-snapshot.pass
           openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000             -in /tmp/ltcms-current-runtime.mv.db             -out /tmp/ltcms-current-runtime.mv.db.enc             -pass file:/tmp/ltcms-snapshot.pass
-          cat > /tmp/ltcms-snapshot-public.pem <<'EOF'
------BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4580r/4PNmTP2+wcqm6I
-0ZrHmkMUhdRm7WNE7q1Q3l7EbBPQNrlmTMzaTAFrgPvGaYq68qzFYDcSczFh+VA2
-Ehk3MHAgRfVFqYOJrKi/hb/1dYRkN9U9qVTvo1jRCjyIauMuewAtHrgvSi/1VsOC
-0C8HBnR53aG1qhtWwKGGYvQ1mQoKQjAt48tqSLM2EXalWiNefL39o3AHyZ5tSY6T
-DldPLvvITzUGptUX7DIlizQ1XuP6XCbMZ1c431EPt9bc5o9aqcNjHshVghzYXzAe
-5sgHzy2EI9pmfArDBqXHFjAjVJQoafWLbu78M69BxyjjGHREFKGwj/NtqbVZge46
-+wIDAQAB
------END PUBLIC KEY-----
-EOF
+          printf '%s' 'LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUE0NTgwci80UE5tVFAyK3djcW02SQowWnJIbWtNVWhkUm03V05FN3ExUTNsN0ViQlBRTnJsbVRNemFUQUZyZ1B2R2FZcTY4cXpGWURjU2N6RmgrVkEyCkVoazNNSEFnUmZWRnFZT0pyS2kvaGIvMWRZUmtOOVU5cVZUdm8xalJDanlJYXVNdWV3QXRIcmd2U2kvMVZzT0MKMEM4SEJuUjUzYUcxcWh0V3dLR0dZdlExbVFvS1FqQXQ0OHRxU0xNMkVYYWxXaU5lZkwzOW8zQUh5WjV0U1k2VApEbGRQTHZ2SVR6VUdwdFVYN0RJbGl6UTFYdVA2WENiTVoxYzQzMUVQdDliYzVvOWFxY05qSHNoVmdoellYekFlCjVzZ0h6eTJFSTlwbWZBckRCcVhIRmpBalZKUW9hZldMYnU3OE02OUJ4eWpqR0hSRUZLR3dqL050cWJWWmdlNDYKK3dJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==' | base64 -d > /tmp/ltcms-snapshot-public.pem
           openssl pkeyutl -encrypt -pubin             -inkey /tmp/ltcms-snapshot-public.pem             -in /tmp/ltcms-snapshot.pass             -out /tmp/ltcms-snapshot.pass.enc             -pkeyopt rsa_padding_mode:oaep             -pkeyopt rsa_oaep_md:sha256
           rm -f /tmp/ltcms-current-runtime.mv.db /tmp/ltcms-snapshot.pass /tmp/ltcms-snapshot-public.pem
 
