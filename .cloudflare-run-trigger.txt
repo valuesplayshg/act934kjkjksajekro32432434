@@ -1,4 +1,3 @@
-LT-CMS TOTP flow fix
-2026-10-02 00:27 KST
-source commit: 37bcb05fcba3ec7dc5d5bdcf0e201b3ccf88bc8f
-checks: frontend build + backend boot + TOTP registration flow
+LT-CMS latest main preview
+2026-10-02
+source commit: c696f48fd615085a54ff254fad5d84898ffe618b
