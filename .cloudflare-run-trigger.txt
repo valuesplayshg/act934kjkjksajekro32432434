@@ -1,4 +1,4 @@
-LT-CMS admin restart
-2026-10-02 00:24 KST
-source commit: 368e14eaf73a8d0c1eaf419c35582662b7801cb9
-checks: latest main build + backend boot + Cloudflare preview
+LT-CMS TOTP flow fix
+2026-10-02 00:27 KST
+source commit: 37bcb05fcba3ec7dc5d5bdcf0e201b3ccf88bc8f
+checks: frontend build + backend boot + TOTP registration flow
