@@ -75,6 +75,46 @@ jobs:
             echo '::error::Controller must not extend EgovAbstractServiceImpl directly.'
             exit 1
           fi
+          if find _src/backend/src/main/java/com/ltcms -name '*Controller.java' -print0 | xargs -0 grep -l '@Transactional' | grep -q .; then
+            echo '::error::Controller must not own transaction boundaries; move business logic to Service.'
+            exit 1
+          fi
+          if grep -R -E -q '^import .*\.mapper\.' _src/backend/src/main/java/com/ltcms --include='*Controller.java'; then
+            echo '::error::Controller must not import Mapper/DAO types directly.'
+            exit 1
+          fi
+          if grep -R -E -q '(DataSource|JdbcTemplate|EntityManager)' _src/backend/src/main/java/com/ltcms --include='*Controller.java'; then
+            echo '::error::Controller must not access persistence infrastructure directly.'
+            exit 1
+          fi
+          while IFS= read -r file; do
+            if grep -q '@Repository' "$file" && grep -E -q '(DataSource|JdbcTemplate|java\.sql\.Connection|getConnection\()' "$file"; then
+              echo "::error::Repository/Mapper must use eGov DataAccess rather than direct JDBC: $file"
+              exit 1
+            fi
+          done < <(find _src/backend/src/main/java/com/ltcms -name '*.java')
+          while IFS= read -r file; do
+            if grep -q '@Service' "$file"; then
+              grep -q 'extends EgovAbstractServiceImpl' "$file" || { echo "::error::Service must extend EgovAbstractServiceImpl: $file"; exit 1; }
+              grep -E -q 'implements[[:space:]]+[A-Za-z0-9_<> ,]*Service' "$file" || { echo "::error::Service must implement a Service interface: $file"; exit 1; }
+            fi
+          done < <(find _src/backend/src/main/java/com/ltcms -name '*.java')
+          if grep -R -E -q '^package[[:space:]]+org\.egovframe\.rte' _src/backend/src/main/java; then
+            echo '::error::Application extensions must not declare org.egovframe.rte packages.'
+            exit 1
+          fi
+          while IFS= read -r file; do
+            base=$(basename "$file")
+            if [[ "$base" == Egov*.java ]] && grep -q 'extends EgovAbstractServiceImpl' "$file"; then
+              echo "::error::Application Service extending eGov base must not use Egov* class name: $file"
+              exit 1
+            fi
+          done < <(find _src/backend/src/main/java/com/ltcms -name '*.java')
+          test -f _src/backend/src/main/java/com/ltcms/ltcms/chat/SitePublicChatServiceImpl.java
+          test -f _src/backend/src/main/java/com/ltcms/basic/service/SiteScopeBootstrapServiceImpl.java
+          test -f _src/backend/src/main/java/com/ltcms/basic/service/SiteProvisionServiceImpl.java
+          test -f _src/backend/src/main/java/com/ltcms/ltcms/database/DatabaseMetadataInspector.java
+          test ! -f _src/backend/src/main/java/com/ltcms/ltcms/database/DatabaseMetadataMapper.java
 
       - name: Set up Node 22
         uses: actions/setup-node@v4
