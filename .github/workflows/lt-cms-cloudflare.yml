@@ -107,6 +107,69 @@ jobs:
           cat /tmp/ltcms-app.log || true
           exit 1
 
+      - name: Snapshot current H2 DB for secure download
+        shell: bash
+        run: |
+          set -euo pipefail
+          DB_FILE="$GITHUB_WORKSPACE/data/ltcms.mv.db"
+          test -f "$DB_FILE"
+
+          # Stop H2 cleanly before copying the file so the MVStore snapshot is consistent.
+          if [ -f /tmp/ltcms-app.pid ] && kill -0 "$(cat /tmp/ltcms-app.pid)" 2>/dev/null; then
+            kill "$(cat /tmp/ltcms-app.pid)"
+            for i in {1..60}; do
+              if ! kill -0 "$(cat /tmp/ltcms-app.pid)" 2>/dev/null; then break; fi
+              sleep 1
+            done
+          fi
+
+          cp "$DB_FILE" /tmp/ltcms-current-runtime.mv.db
+          sha256sum /tmp/ltcms-current-runtime.mv.db | tee /tmp/ltcms-current-runtime.sha256
+
+          # Restart the same backend immediately so the administrator preview remains available.
+          JAR=$(find _src/backend/target -maxdepth 1 -name 'lt-cms-*.jar' ! -name '*.original' | head -1)
+          test -n "$JAR"
+          nohup java -jar "$JAR" >/tmp/ltcms-app.log 2>&1 &
+          echo $! >/tmp/ltcms-app.pid
+          for i in {1..90}; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8087/api/system/info || true)
+            if [ "$code" = "200" ]; then break; fi
+            if ! kill -0 "$(cat /tmp/ltcms-app.pid)" 2>/dev/null; then
+              cat /tmp/ltcms-app.log || true
+              exit 1
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8087/api/system/info >/dev/null
+
+          # Public Actions repo: encrypt DB before upload. Only the matching private key can decrypt it.
+          openssl rand -base64 48 | tr -d '\n' > /tmp/ltcms-snapshot.pass
+          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000             -in /tmp/ltcms-current-runtime.mv.db             -out /tmp/ltcms-current-runtime.mv.db.enc             -pass file:/tmp/ltcms-snapshot.pass
+          cat > /tmp/ltcms-snapshot-public.pem <<'EOF'
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4580r/4PNmTP2+wcqm6I
+0ZrHmkMUhdRm7WNE7q1Q3l7EbBPQNrlmTMzaTAFrgPvGaYq68qzFYDcSczFh+VA2
+Ehk3MHAgRfVFqYOJrKi/hb/1dYRkN9U9qVTvo1jRCjyIauMuewAtHrgvSi/1VsOC
+0C8HBnR53aG1qhtWwKGGYvQ1mQoKQjAt48tqSLM2EXalWiNefL39o3AHyZ5tSY6T
+DldPLvvITzUGptUX7DIlizQ1XuP6XCbMZ1c431EPt9bc5o9aqcNjHshVghzYXzAe
+5sgHzy2EI9pmfArDBqXHFjAjVJQoafWLbu78M69BxyjjGHREFKGwj/NtqbVZge46
++wIDAQAB
+-----END PUBLIC KEY-----
+EOF
+          openssl pkeyutl -encrypt -pubin             -inkey /tmp/ltcms-snapshot-public.pem             -in /tmp/ltcms-snapshot.pass             -out /tmp/ltcms-snapshot.pass.enc             -pkeyopt rsa_padding_mode:oaep             -pkeyopt rsa_oaep_md:sha256
+          rm -f /tmp/ltcms-current-runtime.mv.db /tmp/ltcms-snapshot.pass /tmp/ltcms-snapshot-public.pem
+
+      - name: Upload encrypted H2 runtime snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: lt-cms-h2-runtime-encrypted-${{ github.run_id }}
+          path: |
+            /tmp/ltcms-current-runtime.mv.db.enc
+            /tmp/ltcms-snapshot.pass.enc
+            /tmp/ltcms-current-runtime.sha256
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Start Vite live frontend with HMR
         shell: bash
         working-directory: _src/frontend
