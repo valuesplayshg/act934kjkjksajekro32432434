@@ -65,6 +65,16 @@ jobs:
           grep -q '@Import(EgovSecurityConfiguration.class)' _src/backend/src/main/java/com/ltcms/EgovRuntimeConfig.java
           test -f _src/docs/COMPATIBILITY_GUIDE_PRECHECK_20260930.md
           test -f _src/docs/EGOVFRAME_5_COMPLIANCE_POLICY.md
+          test -f _src/docs/REVIEW_SOURCE_INDEX.md
+          grep -R -q '공식 등급 미확정' _src/backend/src/main/java/com/ltcms/compatibility
+          if grep -R -q '호환 레벨2' _src/backend/src/main/java _src/backend/src/test _src/docs/COMPATIBILITY_PRECHECK_20260930.md; then
+            echo '::error::Formal compatibility level must remain unconfirmed before official review.'
+            exit 1
+          fi
+          if grep -R -E -q 'class[[:space:]]+[A-Za-z0-9_]*Controller[[:space:]]+extends[[:space:]]+EgovAbstractServiceImpl' _src/backend/src/main/java/com/ltcms; then
+            echo '::error::Controller must not extend EgovAbstractServiceImpl directly.'
+            exit 1
+          fi
 
       - name: Set up Node 22
         uses: actions/setup-node@v4
