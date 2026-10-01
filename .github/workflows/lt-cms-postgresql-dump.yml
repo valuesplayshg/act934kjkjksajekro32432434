@@ -1,0 +1,218 @@
+name: LT-CMS PostgreSQL Demo Dump
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/lt-cms-postgresql-dump.yml'
+      - '.lt-cms-postgresql-dump-trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lt-cms-postgresql-demo-dump
+  cancel-in-progress: true
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: ltcms
+          POSTGRES_USER: ltcms
+          POSTGRES_PASSWORD: ltcms_local
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ltcms -d ltcms"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      SOURCE_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN || secrets.token }}
+      JDBC_DATABASE_URL: jdbc:postgresql://127.0.0.1:5432/ltcms
+      DB_USERNAME: ltcms
+      DB_PASSWORD: ltcms_local
+      CMS_DATA_INIT: "true"
+      CMS_SAMPLE_INIT: "true"
+      CMS_SESSION_INIT: "true"
+      SESSION_COOKIE_SECURE: "false"
+
+    steps:
+      - name: Validate private source credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SOURCE_TOKEN"
+
+      - name: Checkout LT-CMS main ephemerally
+        uses: actions/checkout@v4
+        with:
+          repository: valuesplayshg/LT-CMS
+          ref: main
+          token: ${{ env.SOURCE_TOKEN }}
+          path: _src
+          fetch-depth: 1
+          persist-credentials: false
+          show-progress: false
+
+      - name: Record source commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C _src rev-parse HEAD | tee /tmp/source-sha.txt
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          cache-dependency-path: _src/backend/pom.xml
+
+      - name: Build LT-CMS
+        working-directory: _src/backend
+        shell: bash
+        run: mvn -B -DskipTests clean package
+
+      - name: Initialize PostgreSQL with current LT-CMS demo data
+        shell: bash
+        run: |
+          set -euo pipefail
+          JAR=$(find _src/backend/target -maxdepth 1 -name 'lt-cms-*.jar' ! -name '*.original' | head -1)
+          test -n "$JAR"
+          nohup java -jar "$JAR" >/tmp/ltcms-pg.log 2>&1 &
+          echo $! >/tmp/ltcms-pg.pid
+          for i in {1..90}; do
+            if curl -fsS http://127.0.0.1:8087/api/system/info >/tmp/system.json; then
+              cat /tmp/system.json
+              break
+            fi
+            if ! kill -0 "$(cat /tmp/ltcms-pg.pid)" 2>/dev/null; then
+              cat /tmp/ltcms-pg.log
+              exit 1
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8087/api/system/info | grep -q '"framework":"eGovFrame 5.0.0"'
+          DB_PRODUCT=$(PGPASSWORD=ltcms_local psql -h 127.0.0.1 -U ltcms -d ltcms -Atc "select version()")
+          echo "$DB_PRODUCT"
+          TABLES=$(PGPASSWORD=ltcms_local psql -h 127.0.0.1 -U ltcms -d ltcms -Atc "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'")
+          ROWS=$(PGPASSWORD=ltcms_local psql -h 127.0.0.1 -U ltcms -d ltcms -Atc "select count(*) from lt_site")
+          echo "tables=$TABLES lt_site_rows=$ROWS"
+          test "$TABLES" -gt 20
+          test "$ROWS" -gt 0
+
+      - name: Create PostgreSQL native dumps
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ltcms-pg-dump
+          PGPASSWORD=ltcms_local pg_dump             -h 127.0.0.1 -U ltcms -d ltcms             --format=custom --compress=9             --no-owner --no-privileges             --file=/tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_17.dump
+
+          PGPASSWORD=ltcms_local pg_dump             -h 127.0.0.1 -U ltcms -d ltcms             --format=plain --clean --if-exists             --no-owner --no-privileges             --file=/tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_17.sql
+
+          pg_restore --list /tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_17.dump             > /tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_17.list
+
+      - name: Verify dump restore
+        shell: bash
+        run: |
+          set -euo pipefail
+          PGPASSWORD=ltcms_local createdb -h 127.0.0.1 -U ltcms ltcms_restore_test
+          PGPASSWORD=ltcms_local pg_restore             -h 127.0.0.1 -U ltcms -d ltcms_restore_test             --no-owner --no-privileges             /tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_17.dump
+
+          ORIG_TABLES=$(PGPASSWORD=ltcms_local psql -h 127.0.0.1 -U ltcms -d ltcms -Atc "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'")
+          REST_TABLES=$(PGPASSWORD=ltcms_local psql -h 127.0.0.1 -U ltcms -d ltcms_restore_test -Atc "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'")
+          ORIG_SITES=$(PGPASSWORD=ltcms_local psql -h 127.0.0.1 -U ltcms -d ltcms -Atc "select count(*) from lt_site")
+          REST_SITES=$(PGPASSWORD=ltcms_local psql -h 127.0.0.1 -U ltcms -d ltcms_restore_test -Atc "select count(*) from lt_site")
+          echo "original tables=$ORIG_TABLES restored tables=$REST_TABLES"
+          echo "original sites=$ORIG_SITES restored sites=$REST_SITES"
+          test "$ORIG_TABLES" = "$REST_TABLES"
+          test "$ORIG_SITES" = "$REST_SITES"
+
+      - name: Write local install scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA=$(cat /tmp/source-sha.txt)
+          cat > /tmp/ltcms-pg-dump/README_LOCAL_INSTALL.txt <<EOF
+          LT-CMS v1.0 PostgreSQL 17 Demo DB
+          =================================
+          Source main commit: $SHA
+          Generated: 2026-10-01
+          Database: PostgreSQL 17
+          Demo site: SITE001
+
+          [Recommended restore - custom dump]
+
+          1) Install PostgreSQL 17 locally.
+          2) Create an empty database:
+             createdb -U postgres ltcms
+
+          3) Restore:
+             pg_restore -U postgres -d ltcms --no-owner --no-privileges LT-CMS_demo_postgresql_17.dump
+
+          [Plain SQL alternative]
+
+             createdb -U postgres ltcms
+             psql -U postgres -d ltcms -f LT-CMS_demo_postgresql_17.sql
+
+          [LT-CMS local environment]
+
+          JDBC_DATABASE_URL=jdbc:postgresql://localhost:5432/ltcms
+          DB_USERNAME=postgres
+          DB_PASSWORD=<your local PostgreSQL password>
+          CMS_DATA_INIT=false
+          CMS_SAMPLE_INIT=false
+          CMS_SESSION_INIT=false
+
+          Note:
+          - This package contains demo data initialized from the current LT-CMS main code.
+          - The dump is a native PostgreSQL dump, not an H2 file conversion.
+          - Restore verification was performed in CI before packaging.
+          EOF
+
+          cat > /tmp/ltcms-pg-dump/restore_windows.bat <<'EOF'
+          @echo off
+          set DB=ltcms
+          set PGUSER=postgres
+          createdb -U %PGUSER% %DB%
+          pg_restore -U %PGUSER% -d %DB% --no-owner --no-privileges LT-CMS_demo_postgresql_17.dump
+          if errorlevel 1 exit /b 1
+          echo Restore complete: %DB%
+          EOF
+
+          cat > /tmp/ltcms-pg-dump/restore_linux_mac.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          DB="${DB:-ltcms}"
+          PGUSER="${PGUSER:-postgres}"
+          createdb -U "$PGUSER" "$DB"
+          pg_restore -U "$PGUSER" -d "$DB" --no-owner --no-privileges LT-CMS_demo_postgresql_17.dump
+          echo "Restore complete: $DB"
+          EOF
+          chmod +x /tmp/ltcms-pg-dump/restore_linux_mac.sh
+
+          sha256sum /tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_17.dump                     /tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_17.sql             > /tmp/ltcms-pg-dump/SHA256SUMS.txt
+
+      - name: Upload PostgreSQL dump package
+        uses: actions/upload-artifact@v4
+        with:
+          name: LT-CMS_PostgreSQL17_DemoDB_20261001
+          path: /tmp/ltcms-pg-dump/
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Secure cleanup
+        if: always()
+        shell: bash
+        run: |
+          if [ -f /tmp/ltcms-pg.pid ]; then kill "$(cat /tmp/ltcms-pg.pid)" 2>/dev/null || true; fi
+          rm -rf "$GITHUB_WORKSPACE/_src" /tmp/ltcms-pg-dump
+          rm -f /tmp/ltcms-pg.log /tmp/ltcms-pg.pid /tmp/system.json /tmp/source-sha.txt
