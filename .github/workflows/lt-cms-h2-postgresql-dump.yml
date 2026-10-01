@@ -1,0 +1,407 @@
+name: LT-CMS H2 to PostgreSQL Full Dump
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/lt-cms-h2-postgresql-dump.yml'
+      - '.h2-pg-dump-trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lt-cms-h2-postgresql-full-dump
+  cancel-in-progress: true
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SOURCE_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN || secrets.token }}
+      PGPASSWORD: postgres
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ltcms_migration
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d ltcms_migration"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    steps:
+      - name: Validate private source credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SOURCE_TOKEN" || { echo "::error::PRIVATE_REPO_TOKEN (or token) is required."; exit 1; }
+
+      - name: Checkout private LT-CMS main ephemerally
+        uses: actions/checkout@v4
+        with:
+          repository: valuesplayshg/LT-CMS
+          ref: main
+          token: ${{ env.SOURCE_TOKEN }}
+          path: _src
+          fetch-depth: 1
+          persist-credentials: false
+          show-progress: false
+
+      - name: Record source SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_SHA=$(git -C _src rev-parse HEAD)
+          echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
+          echo "Private source commit: $SOURCE_SHA"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          cache-dependency-path: _src/backend/pom.xml
+
+      - name: Build backend
+        working-directory: _src/backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          mvn -q -B -Dmaven.test.skip=true clean package
+          mvn -q -B dependency:build-classpath -Dmdep.outputFile=/tmp/ltcms-runtime-classpath.txt -DincludeScope=runtime
+
+      - name: Create current H2 file database from main
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ltcms-h2"
+          JAR=$(find _src/backend/target -maxdepth 1 -name 'lt-cms-*.jar' ! -name '*.original' | head -1)
+          env             CMS_DATABASE_MODE=file             CMS_FILE_DB_PATH="$RUNNER_TEMP/ltcms-h2/ltcms"             CMS_DATA_INIT=true             CMS_SAMPLE_INIT=true             CMS_SESSION_INIT=true             SESSION_COOKIE_SECURE=false             PORT=8087             nohup java -jar "$JAR" >/tmp/ltcms-h2-app.log 2>&1 &
+          echo $! >/tmp/ltcms-h2-app.pid
+          for i in {1..120}; do
+            if curl -fsS http://127.0.0.1:8087/api/system/info >/tmp/h2-system.json 2>/dev/null; then
+              sleep 8
+              break
+            fi
+            if ! kill -0 "$(cat /tmp/ltcms-h2-app.pid)" 2>/dev/null; then
+              cat /tmp/ltcms-h2-app.log
+              exit 1
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8087/api/system/info >/tmp/h2-system.json
+          kill "$(cat /tmp/ltcms-h2-app.pid)" 2>/dev/null || true
+          wait "$(cat /tmp/ltcms-h2-app.pid)" 2>/dev/null || true
+          test -f "$RUNNER_TEMP/ltcms-h2/ltcms.mv.db"
+          echo "H2_FILE=$RUNNER_TEMP/ltcms-h2/ltcms" >> "$GITHUB_ENV"
+
+      - name: Create empty PostgreSQL schema with LT-CMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          JAR=$(find _src/backend/target -maxdepth 1 -name 'lt-cms-*.jar' ! -name '*.original' | head -1)
+          env             JDBC_DATABASE_URL="jdbc:postgresql://127.0.0.1:5432/ltcms_migration"             DB_USERNAME=postgres             DB_PASSWORD=postgres             CMS_DATA_INIT=true             CMS_SAMPLE_INIT=false             CMS_SESSION_INIT=true             SESSION_COOKIE_SECURE=false             PORT=8088             nohup java -jar "$JAR" >/tmp/ltcms-pg-app.log 2>&1 &
+          echo $! >/tmp/ltcms-pg-app.pid
+          for i in {1..120}; do
+            if curl -fsS http://127.0.0.1:8088/api/system/info >/tmp/pg-system.json 2>/dev/null; then
+              sleep 3
+              break
+            fi
+            if ! kill -0 "$(cat /tmp/ltcms-pg-app.pid)" 2>/dev/null; then
+              cat /tmp/ltcms-pg-app.log
+              exit 1
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8088/api/system/info >/tmp/pg-system.json
+          kill "$(cat /tmp/ltcms-pg-app.pid)" 2>/dev/null || true
+          wait "$(cat /tmp/ltcms-pg-app.pid)" 2>/dev/null || true
+
+      - name: Transfer every H2 business row to PostgreSQL and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >/tmp/H2ToPostgres.java <<'JAVA'
+          import java.sql.*;
+          import java.nio.charset.StandardCharsets;
+          import java.security.MessageDigest;
+          import java.util.*;
+
+          public class H2ToPostgres {
+            static final Set<String> SESSION_TABLES=Set.of("spring_session","spring_session_attributes");
+
+            public static void main(String[] args) throws Exception {
+              if(args.length<4) throw new IllegalArgumentException("h2Url pgUrl pgUser pgPassword");
+              Class.forName("org.h2.Driver"); Class.forName("org.postgresql.Driver");
+              try(Connection h2=DriverManager.getConnection(args[0],"sa","");
+                  Connection pg=DriverManager.getConnection(args[1],args[2],args[3])){
+                migrate(h2,pg);
+                verify(h2,pg);
+              }
+            }
+
+            static List<String> tables(Connection c,String schema) throws Exception{
+              List<String> out=new ArrayList<>();
+              DatabaseMetaData md=c.getMetaData();
+              try(ResultSet rs=md.getTables(null,schema,"%",new String[]{"TABLE","BASE TABLE"})){
+                while(rs.next()){
+                  String n=rs.getString("TABLE_NAME");
+                  if(n!=null) out.add(n.toLowerCase(Locale.ROOT));
+                }
+              }
+              out.sort(String::compareTo);
+              return out;
+            }
+
+            static String id(String s){
+              if(!s.matches("[A-Za-z0-9_]+")) throw new IllegalArgumentException("unsafe identifier "+s);
+              return s.toLowerCase(Locale.ROOT);
+            }
+
+            static void migrate(Connection h2,Connection pg) throws Exception{
+              List<String> hs=tables(h2,"PUBLIC"), ps=tables(pg,"public");
+              Set<String> pset=new HashSet<>(ps);
+              List<String> missing=hs.stream().filter(t->!pset.contains(t)).toList();
+              if(!missing.isEmpty()) throw new IllegalStateException("PostgreSQL missing tables: "+missing);
+
+              pg.setAutoCommit(false);
+              try(Statement st=pg.createStatement()){st.execute("SET session_replication_role = replica");}
+              for(String t:ps){
+                if(SESSION_TABLES.contains(t)) continue;
+                try(Statement st=pg.createStatement()){st.execute("TRUNCATE TABLE "+id(t)+" RESTART IDENTITY CASCADE");}
+              }
+
+              for(String t:hs){
+                if(SESSION_TABLES.contains(t)) continue;
+                copyTable(h2,pg,t);
+              }
+              reseed(pg,hs);
+              try(Statement st=pg.createStatement()){st.execute("SET session_replication_role = origin");}
+              pg.commit();
+            }
+
+            static void copyTable(Connection h2,Connection pg,String table) throws Exception{
+              try(Statement hs=h2.createStatement();ResultSet rs=hs.executeQuery("SELECT * FROM "+id(table))){
+                ResultSetMetaData md=rs.getMetaData();
+                List<String> cols=new ArrayList<>();
+                for(int i=1;i<=md.getColumnCount();i++) cols.add(md.getColumnLabel(i).toLowerCase(Locale.ROOT));
+                if(cols.isEmpty()) return;
+                String sql="INSERT INTO "+id(table)+" ("+String.join(",",cols)+") VALUES ("+String.join(",",Collections.nCopies(cols.size(),"?"))+")";
+                long count=0;
+                try(PreparedStatement ps=pg.prepareStatement(sql)){
+                  while(rs.next()){
+                    for(int i=1;i<=cols.size();i++) bind(ps,i,rs,md.getColumnType(i));
+                    ps.addBatch(); count++;
+                    if(count%500==0) ps.executeBatch();
+                  }
+                  ps.executeBatch();
+                }
+                System.out.println("COPIED "+table+" "+count);
+              }
+            }
+
+            static void bind(PreparedStatement ps,int i,ResultSet rs,int type) throws Exception{
+              Object v=rs.getObject(i);
+              if(v==null){ps.setNull(i,type);return;}
+              switch(type){
+                case Types.BINARY,Types.VARBINARY,Types.LONGVARBINARY,Types.BLOB -> ps.setBytes(i,rs.getBytes(i));
+                case Types.CLOB,Types.NCLOB,Types.LONGVARCHAR,Types.LONGNVARCHAR -> ps.setString(i,rs.getString(i));
+                default -> ps.setObject(i,v);
+              }
+            }
+
+            static void reseed(Connection pg,List<String> tables) throws Exception{
+              for(String t:tables){
+                if(SESSION_TABLES.contains(t)) continue;
+                boolean hasId=false;
+                try(ResultSet rs=pg.getMetaData().getColumns(null,"public",t,"id")){hasId=rs.next();}
+                if(!hasId) continue;
+                String seq=null;
+                try(PreparedStatement ps=pg.prepareStatement("SELECT pg_get_serial_sequence(?, 'id')")){
+                  ps.setString(1,"public."+t);
+                  try(ResultSet rs=ps.executeQuery()){if(rs.next())seq=rs.getString(1);}
+                }
+                if(seq==null||seq.isBlank()) continue;
+                long max=0,count=0;
+                try(Statement st=pg.createStatement();ResultSet rs=st.executeQuery("SELECT COALESCE(MAX(id),0),COUNT(*) FROM "+id(t))){
+                  if(rs.next()){max=rs.getLong(1);count=rs.getLong(2);}
+                }
+                String q="SELECT setval('"+seq.replace("'","''")+"',"+Math.max(max,1)+","+(count>0?"true":"false")+")";
+                try(Statement st=pg.createStatement()){st.execute(q);}
+              }
+            }
+
+            static void verify(Connection h2,Connection pg) throws Exception{
+              List<String> hs=tables(h2,"PUBLIC");
+              int checked=0;
+              for(String t:hs){
+                if(SESSION_TABLES.contains(t)) continue;
+                long a=count(h2,t),b=count(pg,t);
+                if(a!=b) throw new IllegalStateException("row count mismatch "+t+": H2="+a+" PG="+b);
+                checked++;
+              }
+              List<String> hm=rows(h2,"SELECT site_code,menu_code,menu_name,menu_url,parent_menu_code,status,sort_order FROM lt_menu ORDER BY site_code,menu_code");
+              List<String> pm=rows(pg,"SELECT site_code,menu_code,menu_name,menu_url,parent_menu_code,status,sort_order FROM lt_menu ORDER BY site_code,menu_code");
+              if(!hm.equals(pm)) throw new IllegalStateException("lt_menu content mismatch");
+              String relSql="SELECT site_code,source_table,source_code,relation_type,target_table,target_code,metadata_json FROM lt_feature_relation WHERE source_table='LT_MENU' OR source_code='ADMIN_NAV_ORDER' OR relation_type IN ('NAV_ORDER','MENU_META') ORDER BY site_code,source_table,source_code,relation_type,target_table,target_code,id";
+              List<String> hr=rows(h2,relSql), pr=rows(pg,relSql);
+              if(!hr.equals(pr)) throw new IllegalStateException("menu navigation relation mismatch");
+              System.out.println("VERIFIED_TABLES="+checked);
+              System.out.println("VERIFIED_MENU_ROWS="+hm.size());
+              System.out.println("VERIFIED_MENU_RELATIONS="+hr.size());
+              System.out.println("MENU_SHA256="+sha(String.join("\n",hm)));
+              System.out.println("MENU_RELATION_SHA256="+sha(String.join("\n",hr)));
+            }
+
+            static long count(Connection c,String t)throws Exception{
+              try(Statement st=c.createStatement();ResultSet rs=st.executeQuery("SELECT COUNT(*) FROM "+id(t))){rs.next();return rs.getLong(1);}
+            }
+            static List<String> rows(Connection c,String sql)throws Exception{
+              List<String> out=new ArrayList<>();
+              try(Statement st=c.createStatement();ResultSet rs=st.executeQuery(sql)){
+                int n=rs.getMetaData().getColumnCount();
+                while(rs.next()){
+                  StringBuilder b=new StringBuilder();
+                  for(int i=1;i<=n;i++){if(i>1)b.append('\u001f');Object v=rs.getObject(i);b.append(v==null?"<NULL>":String.valueOf(v));}
+                  out.add(b.toString());
+                }
+              }
+              return out;
+            }
+            static String sha(String s)throws Exception{
+              byte[] d=MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8));
+              StringBuilder b=new StringBuilder();for(byte x:d)b.append(String.format("%02x",x));return b.toString();
+            }
+          }
+          JAVA
+          CP="$(cat /tmp/ltcms-runtime-classpath.txt)"
+          javac -cp "$CP" /tmp/H2ToPostgres.java
+          java -cp "/tmp:$CP" H2ToPostgres             "jdbc:h2:file:$H2_FILE;MODE=PostgreSQL;AUTO_SERVER=TRUE"             "jdbc:postgresql://127.0.0.1:5432/ltcms_migration"             postgres postgres | tee /tmp/migration-verification.txt
+
+      - name: Create PostgreSQL plain SQL dump
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="_src/backup/postgresql/20261002"
+          mkdir -p "$OUT"
+          DUMP="$OUT/LT-CMS_H2_full_postgresql_16.sql"
+          pg_dump             -h 127.0.0.1 -U postgres -d ltcms_migration             --format=p --clean --if-exists --no-owner --no-privileges             --file="$DUMP"
+          {
+            echo ""
+            echo "-- LT-CMS migration source commit: $SOURCE_SHA"
+            echo "-- Generated from an actual H2 file database initialized from that commit."
+            echo "-- Spring Session row data is intentionally not migrated; session table schema is retained."
+          } >> "$DUMP"
+          test -s "$DUMP"
+          sha256sum "$DUMP" | tee "$OUT/LT-CMS_H2_full_postgresql_16.sql.sha256"
+          cp /tmp/migration-verification.txt "$OUT/verification.txt"
+
+      - name: Restore dump into a second PostgreSQL database
+        shell: bash
+        run: |
+          set -euo pipefail
+          createdb -h 127.0.0.1 -U postgres ltcms_restore
+          psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U postgres -d ltcms_restore             -f _src/backup/postgresql/20261002/LT-CMS_H2_full_postgresql_16.sql >/tmp/restore.log
+          src_tables=$(psql -At -h 127.0.0.1 -U postgres -d ltcms_migration -c "SELECT count(*) FROM pg_tables WHERE schemaname='public'")
+          dst_tables=$(psql -At -h 127.0.0.1 -U postgres -d ltcms_restore -c "SELECT count(*) FROM pg_tables WHERE schemaname='public'")
+          test "$src_tables" = "$dst_tables"
+          src_menu=$(psql -At -h 127.0.0.1 -U postgres -d ltcms_migration -c "SELECT count(*) FROM lt_menu")
+          dst_menu=$(psql -At -h 127.0.0.1 -U postgres -d ltcms_restore -c "SELECT count(*) FROM lt_menu")
+          test "$src_menu" = "$dst_menu"
+          src_rel=$(psql -At -h 127.0.0.1 -U postgres -d ltcms_migration -c "SELECT count(*) FROM lt_feature_relation WHERE source_table='LT_MENU' OR source_code='ADMIN_NAV_ORDER' OR relation_type IN ('NAV_ORDER','MENU_META')")
+          dst_rel=$(psql -At -h 127.0.0.1 -U postgres -d ltcms_restore -c "SELECT count(*) FROM lt_feature_relation WHERE source_table='LT_MENU' OR source_code='ADMIN_NAV_ORDER' OR relation_type IN ('NAV_ORDER','MENU_META')")
+          test "$src_rel" = "$dst_rel"
+          {
+            echo "RESTORE_VERIFIED=true"
+            echo "PUBLIC_TABLES=$src_tables"
+            echo "MENU_ROWS=$src_menu"
+            echo "MENU_RELATIONS=$src_rel"
+          } | tee -a _src/backup/postgresql/20261002/verification.txt
+
+      - name: Write restore README
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >_src/backup/postgresql/20261002/README.md <<EOF
+          # LT-CMS H2 -> PostgreSQL 16 Full Dump
+
+          Source commit: `$SOURCE_SHA`
+
+          Files:
+          - `LT-CMS_H2_full_postgresql_16.sql`: PostgreSQL plain SQL dump
+          - `LT-CMS_H2_full_postgresql_16.sql.sha256`: SHA-256
+          - `verification.txt`: H2 -> PostgreSQL transfer and restore checks
+
+          Generation:
+          1. Current `main` was started with the default H2 **file** database.
+          2. All LT-CMS startup initializers completed.
+          3. PostgreSQL 16 schema was created by the same application source.
+          4. Every non-session H2 table row was copied with explicit primary keys.
+          5. Identity sequences were reseeded after copy.
+          6. `lt_menu` and menu navigation relations (`ADMIN_NAV_ORDER`, `NAV_ORDER`, `MENU_META`) were compared exactly.
+          7. `pg_dump` output was restored into a second empty PostgreSQL database and checked again.
+
+          Spring Session **row data** is intentionally excluded so a restored server does not inherit stale authenticated sessions. The Spring Session table schema is included.
+
+          Restore:
+          ```bash
+          createdb -U postgres ltcms
+          psql -v ON_ERROR_STOP=1 -U postgres -d ltcms -f LT-CMS_H2_full_postgresql_16.sql
+          ```
+
+          Application settings after restore:
+          ```text
+          JDBC_DATABASE_URL=jdbc:postgresql://localhost:5432/ltcms
+          DB_USERNAME=postgres
+          DB_PASSWORD=<password>
+          CMS_DATA_INIT=false
+          CMS_SAMPLE_INIT=false
+          CMS_SESSION_INIT=false
+          ```
+
+          Do not enable sample initialization after restore; it can introduce data that was not part of the migrated H2 database.
+          EOF
+
+      - name: Commit verified dump to private LT-CMS main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C _src config user.name "LT-CMS Migration Bot"
+          git -C _src config user.email "ltcms-migration@users.noreply.github.com"
+          git -C _src add backup/postgresql/20261002
+          if git -C _src diff --cached --quiet; then
+            echo "No dump changes to commit."
+          else
+            git -C _src commit -m "backup: add verified H2 to PostgreSQL full dump"
+            set +x
+            git -C _src push "https://x-access-token:${SOURCE_TOKEN}@github.com/valuesplayshg/LT-CMS.git" HEAD:main
+          fi
+
+      - name: Upload verification metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: ltcms-h2-postgresql-verification
+          path: |
+            _src/backup/postgresql/20261002/LT-CMS_H2_full_postgresql_16.sql.sha256
+            _src/backup/postgresql/20261002/verification.txt
+            _src/backup/postgresql/20261002/README.md
+          retention-days: 3
+
+      - name: Secure cleanup
+        if: always()
+        shell: bash
+        run: |
+          if [ -f /tmp/ltcms-h2-app.pid ]; then kill "$(cat /tmp/ltcms-h2-app.pid)" 2>/dev/null || true; fi
+          if [ -f /tmp/ltcms-pg-app.pid ]; then kill "$(cat /tmp/ltcms-pg-app.pid)" 2>/dev/null || true; fi
+          rm -rf "$GITHUB_WORKSPACE/_src" "$RUNNER_TEMP/ltcms-h2"
+          rm -f /tmp/H2ToPostgres.java /tmp/H2ToPostgres.class /tmp/ltcms-runtime-classpath.txt
