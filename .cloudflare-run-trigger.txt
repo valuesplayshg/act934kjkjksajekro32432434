@@ -1,4 +1,4 @@
-LT-CMS final site-management build verification
-2026-09-29 11:17 KST
-source commit: 925f6ee1e9c92241fccac2ea862fcad649cb82dc
-checks: final frontend build + backend boot
+LT-CMS admin restart
+2026-10-02 00:24 KST
+source commit: 368e14eaf73a8d0c1eaf419c35582662b7801cb9
+checks: latest main build + backend boot + Cloudflare preview
