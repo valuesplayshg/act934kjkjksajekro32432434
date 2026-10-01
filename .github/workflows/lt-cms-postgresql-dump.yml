@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:17
+        image: postgres:16
         env:
           POSTGRES_DB: ltcms
           POSTGRES_USER: ltcms
@@ -114,18 +114,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/ltcms-pg-dump
-          PGPASSWORD=ltcms_local pg_dump             -h 127.0.0.1 -U ltcms -d ltcms             --format=custom --compress=9             --no-owner --no-privileges             --file=/tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_17.dump
+          PGPASSWORD=ltcms_local pg_dump             -h 127.0.0.1 -U ltcms -d ltcms             --format=custom --compress=9             --no-owner --no-privileges             --file=/tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_16.dump
 
-          PGPASSWORD=ltcms_local pg_dump             -h 127.0.0.1 -U ltcms -d ltcms             --format=plain --clean --if-exists             --no-owner --no-privileges             --file=/tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_17.sql
+          PGPASSWORD=ltcms_local pg_dump             -h 127.0.0.1 -U ltcms -d ltcms             --format=plain --clean --if-exists             --no-owner --no-privileges             --file=/tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_16.sql
 
-          pg_restore --list /tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_17.dump             > /tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_17.list
+          pg_restore --list /tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_16.dump             > /tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_16.list
 
       - name: Verify dump restore
         shell: bash
         run: |
           set -euo pipefail
           PGPASSWORD=ltcms_local createdb -h 127.0.0.1 -U ltcms ltcms_restore_test
-          PGPASSWORD=ltcms_local pg_restore             -h 127.0.0.1 -U ltcms -d ltcms_restore_test             --no-owner --no-privileges             /tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_17.dump
+          PGPASSWORD=ltcms_local pg_restore             -h 127.0.0.1 -U ltcms -d ltcms_restore_test             --no-owner --no-privileges             /tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_16.dump
 
           ORIG_TABLES=$(PGPASSWORD=ltcms_local psql -h 127.0.0.1 -U ltcms -d ltcms -Atc "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'")
           REST_TABLES=$(PGPASSWORD=ltcms_local psql -h 127.0.0.1 -U ltcms -d ltcms_restore_test -Atc "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'")
@@ -142,26 +142,26 @@ jobs:
           set -euo pipefail
           SHA=$(cat /tmp/source-sha.txt)
           cat > /tmp/ltcms-pg-dump/README_LOCAL_INSTALL.txt <<EOF
-          LT-CMS v1.0 PostgreSQL 17 Demo DB
+          LT-CMS v1.0 PostgreSQL 16 Demo DB
           =================================
           Source main commit: $SHA
           Generated: 2026-10-01
-          Database: PostgreSQL 17
+          Database: PostgreSQL 16
           Demo site: SITE001
 
           [Recommended restore - custom dump]
 
-          1) Install PostgreSQL 17 locally.
+          1) Install PostgreSQL 16 locally.
           2) Create an empty database:
              createdb -U postgres ltcms
 
           3) Restore:
-             pg_restore -U postgres -d ltcms --no-owner --no-privileges LT-CMS_demo_postgresql_17.dump
+             pg_restore -U postgres -d ltcms --no-owner --no-privileges LT-CMS_demo_postgresql_16.dump
 
           [Plain SQL alternative]
 
              createdb -U postgres ltcms
-             psql -U postgres -d ltcms -f LT-CMS_demo_postgresql_17.sql
+             psql -U postgres -d ltcms -f LT-CMS_demo_postgresql_16.sql
 
           [LT-CMS local environment]
 
@@ -183,7 +183,7 @@ jobs:
           set DB=ltcms
           set PGUSER=postgres
           createdb -U %PGUSER% %DB%
-          pg_restore -U %PGUSER% -d %DB% --no-owner --no-privileges LT-CMS_demo_postgresql_17.dump
+          pg_restore -U %PGUSER% -d %DB% --no-owner --no-privileges LT-CMS_demo_postgresql_16.dump
           if errorlevel 1 exit /b 1
           echo Restore complete: %DB%
           EOF
@@ -194,17 +194,17 @@ jobs:
           DB="${DB:-ltcms}"
           PGUSER="${PGUSER:-postgres}"
           createdb -U "$PGUSER" "$DB"
-          pg_restore -U "$PGUSER" -d "$DB" --no-owner --no-privileges LT-CMS_demo_postgresql_17.dump
+          pg_restore -U "$PGUSER" -d "$DB" --no-owner --no-privileges LT-CMS_demo_postgresql_16.dump
           echo "Restore complete: $DB"
           EOF
           chmod +x /tmp/ltcms-pg-dump/restore_linux_mac.sh
 
-          sha256sum /tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_17.dump                     /tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_17.sql             > /tmp/ltcms-pg-dump/SHA256SUMS.txt
+          sha256sum /tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_16.dump                     /tmp/ltcms-pg-dump/LT-CMS_demo_postgresql_16.sql             > /tmp/ltcms-pg-dump/SHA256SUMS.txt
 
       - name: Upload PostgreSQL dump package
         uses: actions/upload-artifact@v4
         with:
-          name: LT-CMS_PostgreSQL17_DemoDB_20261001
+          name: LT-CMS_PostgreSQL16_DemoDB_20261001
           path: /tmp/ltcms-pg-dump/
           if-no-files-found: error
           retention-days: 1
