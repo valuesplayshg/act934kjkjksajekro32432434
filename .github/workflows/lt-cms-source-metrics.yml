@@ -1,0 +1,142 @@
+name: LT-CMS Source Metrics
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/lt-cms-source-metrics.yml'
+      - '.lt-cms-source-metrics-trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  metrics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN || secrets.token }}
+    steps:
+      - name: Validate private source credential
+        shell: bash
+        run: test -n "$SOURCE_TOKEN"
+
+      - name: Checkout LT-CMS main ephemerally
+        uses: actions/checkout@v4
+        with:
+          repository: valuesplayshg/LT-CMS
+          ref: main
+          token: ${{ env.SOURCE_TOKEN }}
+          path: _src
+          fetch-depth: 1
+          persist-credentials: false
+          show-progress: false
+
+      - name: Calculate source folders files and lines
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          root=Path('_src')
+          prod_roots=[
+              root/'backend/src/main/java',
+              root/'backend/src/main/resources',
+              root/'frontend/src',
+          ]
+          test_roots=[
+              root/'backend/src/test/java',
+              root/'e2e',
+          ]
+          support_files=[
+              root/'backend/pom.xml',
+              root/'frontend/index.html',
+              root/'frontend/package.json',
+              root/'frontend/pnpm-workspace.yaml',
+              root/'frontend/tsconfig.json',
+              root/'frontend/vite.config.ts',
+              root/'Dockerfile.vercel',
+              root/'vercel.json',
+          ]
+
+          def text_lines(path):
+              data=path.read_bytes()
+              if b'\x00' in data:
+                  return None
+              text=data.decode('utf-8',errors='replace')
+              return 0 if not text else len(text.splitlines())
+
+          def collect_roots(roots):
+              files=[]
+              dirs=set()
+              for r in roots:
+                  if not r.exists(): continue
+                  for d in [r,*[p for p in r.rglob('*') if p.is_dir()]]:
+                      dirs.add(str(d.relative_to(root)))
+                  for p in r.rglob('*'):
+                      if p.is_file():
+                          n=text_lines(p)
+                          if n is not None:
+                              files.append((str(p.relative_to(root)),n))
+              return files,dirs
+
+          prod_files,prod_dirs=collect_roots(prod_roots)
+          test_files,test_dirs=collect_roots(test_roots)
+          support=[]
+          support_dirs=set()
+          for p in support_files:
+              if p.exists():
+                  n=text_lines(p)
+                  if n is not None:
+                      support.append((str(p.relative_to(root)),n))
+                      support_dirs.add(str(p.parent.relative_to(root)))
+
+          def group(prefix, rows):
+              m=[x for x in rows if x[0].startswith(prefix)]
+              dirs=set()
+              for path,_ in m:
+                  parts=Path(path).parent.parts
+                  for i in range(1,len(parts)+1):
+                      dirs.add(str(Path(*parts[:i])))
+              return {'files':len(m),'lines':sum(x[1] for x in m),'folders':len(dirs)}
+
+          all_rows=prod_files+test_files+support
+          all_dirs=set(prod_dirs)|set(test_dirs)|set(support_dirs)
+          result={
+              'commit': __import__('subprocess').check_output(['git','-C','_src','rev-parse','HEAD'],text=True).strip(),
+              'definition':'physical lines including blank/comment lines; UTF-8 text files only',
+              'production':{
+                  'folders':len(prod_dirs),'files':len(prod_files),'lines':sum(x[1] for x in prod_files),
+                  'backend_java':group('backend/src/main/java/',prod_files),
+                  'backend_resources':group('backend/src/main/resources/',prod_files),
+                  'frontend_src':group('frontend/src/',prod_files),
+              },
+              'tests':{
+                  'folders':len(test_dirs),'files':len(test_files),'lines':sum(x[1] for x in test_files),
+                  'backend_test_java':group('backend/src/test/java/',test_files),
+                  'e2e':group('e2e/',test_files),
+              },
+              'build_runtime_support':{
+                  'folders':len(support_dirs),'files':len(support),'lines':sum(x[1] for x in support),
+              },
+              'development_total':{
+                  'folders':len(all_dirs),'files':len(all_rows),'lines':sum(x[1] for x in all_rows),
+              },
+          }
+          print('SOURCE_METRICS_JSON='+json.dumps(result,ensure_ascii=False,separators=(',',':')))
+          Path('/tmp/ltcms-source-metrics.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
+          PY
+
+      - name: Upload metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: lt-cms-source-metrics-${{ github.run_id }}
+          path: /tmp/ltcms-source-metrics.json
+          retention-days: 7
+
+      - name: Secure cleanup
+        if: always()
+        shell: bash
+        run: rm -rf "$GITHUB_WORKSPACE/_src" /tmp/ltcms-source-metrics.json
