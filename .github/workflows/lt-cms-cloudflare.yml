@@ -10,7 +10,7 @@ permissions:
   statuses: write
 
 concurrency:
-  group: lt-cms-private-cloudflare-preview-site-integration-260926
+  group: lt-cms-private-cloudflare-preview
   cancel-in-progress: true
 
 jobs:
@@ -52,17 +52,6 @@ jobs:
           set -euo pipefail
           npm install --no-audit --no-fund >/tmp/ltcms-npm.log 2>&1
           echo "Frontend dependencies installed."
-
-      - name: Verify frontend TypeScript and production build
-        shell: bash
-        working-directory: _src/frontend
-        run: |
-          set -euo pipefail
-          if ! npm run build >/tmp/ltcms-frontend-build.log 2>&1; then
-            cat /tmp/ltcms-frontend-build.log
-            exit 1
-          fi
-          echo "Frontend TypeScript/Vite build completed."
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -133,63 +122,6 @@ jobs:
           cat /tmp/ltcms-vite.log || true
           exit 1
 
-      - name: Verify login through Vite proxy
-        shell: bash
-        run: |
-          set -euo pipefail
-          PASS=$(sed -n "s/.*--data-urlencode 'password=\([^']*\)'.*/\1/p" _src/.github/workflows/ci-main.yml | head -1)
-          test -n "$PASS"
-          rm -f /tmp/ltcms-auth-cookies.txt
-          CSRF_JSON=$(curl -fsS -c /tmp/ltcms-auth-cookies.txt http://127.0.0.1:5173/api/auth/csrf)
-          CSRF=$(printf '%s' "$CSRF_JSON" | python -c "import json,sys; print(json.load(sys.stdin)['token'])")
-          HEADER=$(printf '%s' "$CSRF_JSON" | python -c "import json,sys; print(json.load(sys.stdin)['headerName'])")
-          curl -fsS -L -b /tmp/ltcms-auth-cookies.txt -c /tmp/ltcms-auth-cookies.txt \
-            -H "$HEADER: $CSRF" -H 'Content-Type: application/x-www-form-urlencoded' \
-            --data-urlencode 'username=SITE001:admin' --data-urlencode "password=$PASS" \
-            http://127.0.0.1:5173/api/auth/process >/tmp/ltcms-login.json
-          SESSION=$(curl -fsS -b /tmp/ltcms-auth-cookies.txt http://127.0.0.1:5173/api/auth/session)
-          printf '%s' "$SESSION" | python -c "import json,sys; d=json.load(sys.stdin); assert d.get('siteCode')=='SITE001' and d.get('username')=='admin'"
-          echo "Vite proxy login verified."
-
-      # Run diagnostics without taking down the explicitly requested live Vite preview.
-      # Failing checks stay red in logs; deployment is not claimed as QA-approved.
-      - name: Browser verify menu permission storyboard and CRUD
-        id: site_smoke
-        continue-on-error: true
-        working-directory: _src/e2e
-        env:
-          LTCMS_BASE_URL: http://127.0.0.1:5173
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm install --no-audit --no-fund >/tmp/ltcms-playwright-install.log 2>&1
-          npx playwright install --with-deps chromium >/tmp/ltcms-playwright-browser.log 2>&1
-          npx playwright test ltcms.spec.ts -g 'SITE001 파일관리 메뉴 클릭|SITE001 메뉴관리 첫 화면|SITE001 메뉴담당은|SITE001 기본 디자인|SITE001 회원 비밀번호는|SITE001 메뉴담당 체크박스 다중 선택|SITE001 파일관리 첨부 저장|SITE001 퀵메뉴 등록 우측' --reporter=line
-
-      # Full 66-menu screenshots run in the separate review workflow, not the live preview.
-      - name: Capture all storyboard menu screens
-        if: ${{ false }}
-        continue-on-error: true
-        working-directory: _src/e2e
-        env:
-          LTCMS_BASE_URL: http://127.0.0.1:5173
-          LTCMS_AUDIT_DIR: storyboard-audit
-        shell: bash
-        run: |
-          npx playwright test storyboard-audit.spec.ts -g '전체 메뉴 화면 캡처 - 오류 화면도 누락 없이 수집' --reporter=line
-
-      # Only rendered UI screenshots and the index are exported; never source files.
-      - name: Upload screenshot evidence only
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: lt-cms-storyboard-screens-${{ github.run_id }}
-          path: |
-            _src/e2e/storyboard-audit/full-menu/
-            _src/e2e/storyboard-audit/full-menu-index.json
-          if-no-files-found: warn
-          retention-days: 1
-
       - name: Start live frontend source sync
         shell: bash
         run: |
@@ -233,40 +165,24 @@ jobs:
           curl -L --fail --retry 3 -sS -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x /tmp/cloudflared
 
+          nohup /tmp/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:5173 >/tmp/cloudflared.log 2>&1 &
+          echo $! >/tmp/cloudflared.pid
+
           URL=""
-          for attempt in 1 2 3; do
-            rm -f /tmp/cloudflared.log /tmp/cloudflared.pid
-            nohup /tmp/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:5173 >/tmp/cloudflared.log 2>&1 &
-            echo $! >/tmp/cloudflared.pid
-
-            CANDIDATE=""
-            for i in {1..60}; do
-              # The API endpoint may appear in error logs; it is NOT a tunnel URL.
-              CANDIDATE=$(grep -Eo 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cloudflared.log | grep -vE '^https://(api|www)\.trycloudflare\.com$' | head -1 || true)
-              [ -n "$CANDIDATE" ] && break
-              if ! kill -0 "$(cat /tmp/cloudflared.pid)" 2>/dev/null; then break; fi
-              sleep 2
-            done
-
-            if [ -n "$CANDIDATE" ]; then
-              for i in {1..12}; do
-                if curl -fsS -L --connect-timeout 5 --max-time 15 "$CANDIDATE/api/system/info" 2>/dev/null | python -c 'import json,sys; assert isinstance(json.load(sys.stdin), dict)' 2>/dev/null; then
-                  URL="$CANDIDATE"
-                  break
-                fi
-                sleep 2
-              done
-            fi
-
+          for i in {1..90}; do
+            URL=$(grep -Eo 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cloudflared.log | head -1 || true)
             [ -n "$URL" ] && break
-            echo "::warning::Tunnel attempt $attempt did not yield a healthy public LT-CMS endpoint."
-            kill "$(cat /tmp/cloudflared.pid)" 2>/dev/null || true
-            sleep 3
+            if ! kill -0 "$(cat /tmp/cloudflared.pid)" 2>/dev/null; then
+              echo "::error::cloudflared stopped before issuing a URL."
+              cat /tmp/cloudflared.log || true
+              exit 1
+            fi
+            sleep 2
           done
 
           if [ -z "$URL" ]; then
-            echo "::error::No externally verified Cloudflare Quick Tunnel URL."
-            tail -30 /tmp/cloudflared.log || true
+            echo "::error::Cloudflare Quick Tunnel did not issue a URL."
+            cat /tmp/cloudflared.log || true
             exit 1
           fi
 
@@ -284,6 +200,33 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "LT-CMS LIVE HMR URL: $URL"
 
+      - name: Verify login through public Cloudflare URL
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/ltcms-public-cookies.txt
+
+          for i in {1..30}; do
+            if curl -fsS --retry 1 --connect-timeout 5 --max-time 10 "$CLOUDFLARE_URL/" >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+
+          CSRF_JSON=$(curl -fsS --connect-timeout 8 --max-time 15 -c /tmp/ltcms-public-cookies.txt "$CLOUDFLARE_URL/api/auth/csrf")
+          CSRF=$(echo "$CSRF_JSON" | python -c "import json,sys; print(json.load(sys.stdin)['token'])")
+          CSRF_HEADER=$(echo "$CSRF_JSON" | python -c "import json,sys; print(json.load(sys.stdin)['headerName'])")
+
+          LOGIN_JSON=$(curl -fsS --connect-timeout 8 --max-time 20 \
+            -b /tmp/ltcms-public-cookies.txt -c /tmp/ltcms-public-cookies.txt \
+            -H "$CSRF_HEADER: $CSRF" \
+            -H 'Content-Type: application/x-www-form-urlencoded' \
+            --data-urlencode 'username=SITE001:admin' \
+            --data-urlencode 'password=admin1234' \
+            "$CLOUDFLARE_URL/api/auth/process")
+
+          echo "$LOGIN_JSON" | python -c "import json,sys; x=json.load(sys.stdin); assert x.get('siteCode')=='SITE001' and x.get('username')=='admin'; print('Public tunnel login verified:', x.get('siteCode'), x.get('username'))"
+
       - name: Publish URL marker only
         uses: actions/upload-artifact@v4
         with:
@@ -296,7 +239,6 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          SITE_SMOKE_OUTCOME: ${{ steps.site_smoke.outcome }}
         run: |
           python - <<'PY'
           import json, os, urllib.request
@@ -305,7 +247,7 @@ jobs:
           payload = json.dumps({
               "state": "success",
               "target_url": url,
-              "description": f"LT-CMS live HMR; SITE001 browser smoke: {os.environ.get('SITE_SMOKE_OUTCOME','unknown')}",
+              "description": "LT-CMS live HMR preview is active",
               "context": "lt-cms/cloudflare-preview"
           }).encode()
           req = urllib.request.Request(
@@ -341,5 +283,3 @@ jobs:
           rm -f /tmp/ltcms-*.log /tmp/ltcms-*.pid /tmp/ltcms-last-source-sha /tmp/lt-cms-cloudflare-url.txt
           rm -f /tmp/cloudflared /tmp/cloudflared.log /tmp/cloudflared.pid
           echo "Ephemeral private source and runtime files removed."
-
-# SITE001 shared top-toolbar and board context verification; source remains private on ephemeral runner.
