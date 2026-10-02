@@ -3,4 +3,4 @@ LT-CMS latest main preview
 source commit: 59f59170429c9763286f549bfd95f1c32efcbbb0
 frontend: Vite 5173
 database: H2 file mode
-allowed host: .trycloudflare.com
+public DNS verification: 1.1.1.1
