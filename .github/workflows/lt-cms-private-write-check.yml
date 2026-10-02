@@ -1,0 +1,37 @@
+name: LT-CMS Private Write Permission Check
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/lt-cms-private-write-check.yml'
+      - '.private-write-check-trigger'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      READ_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN || secrets.token }}
+      WRITE_TOKEN: ${{ secrets.token }}
+    steps:
+      - name: Checkout private source read-only
+        uses: actions/checkout@v4
+        with:
+          repository: valuesplayshg/LT-CMS
+          ref: main
+          token: ${{ env.READ_TOKEN }}
+          path: _src
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify write token with dry run only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$WRITE_TOKEN" || { echo "::error::token secret is empty"; exit 1; }
+          git -C _src remote set-url origin "https://x-access-token:$WRITE_TOKEN@github.com/valuesplayshg/LT-CMS.git"
+          git -C _src push --dry-run origin HEAD:main
+          echo "PRIVATE_WRITE_TOKEN_OK=true"
