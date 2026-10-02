@@ -257,7 +257,7 @@ jobs:
         shell: bash
         run: |
           echo "Live HMR preview: $CLOUDFLARE_URL"
-          sleep 20400
+          sleep 10800
 
       - name: Secure cleanup
         if: always()
