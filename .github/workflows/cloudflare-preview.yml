@@ -116,7 +116,8 @@ jobs:
           chmod +x cloudflared
 
           WORKING_URL=""
-          for attempt in 1 2 3; do
+          for attempt in 1 2 3 4 5; do
+            echo "Starting Cloudflare tunnel attempt $attempt/5"
             rm -f cloudflared.log cloudflared.pid
             nohup ./cloudflared tunnel --no-autoupdate --url http://127.0.0.1:5173 > cloudflared.log 2>&1 &
             echo $! > cloudflared.pid
@@ -125,27 +126,47 @@ jobs:
             for i in {1..60}; do
               URL=$(grep -Eo 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' cloudflared.log | head -1 || true)
               [[ -n "$URL" ]] && break
-              if ! kill -0 "$(cat cloudflared.pid)" 2>/dev/null; then break; fi
+              if ! kill -0 "$(cat cloudflared.pid)" 2>/dev/null; then
+                break
+              fi
               sleep 2
             done
 
-            if [[ -n "$URL" ]]; then
-              for i in {1..45}; do
-                code=$(curl -k -sS -L -o /dev/null -w '%{http_code}' "$URL" || true)
-                if [[ "$code" =~ ^(200|301|302|401|403)$ ]]; then
+            if [[ -z "$URL" ]]; then
+              echo "Tunnel attempt $attempt did not produce a URL"
+              cat cloudflared.log || true
+              kill "$(cat cloudflared.pid)" 2>/dev/null || true
+              sleep 4
+              continue
+            fi
+
+            HOST=${URL#https://}
+            echo "Candidate URL: $URL"
+            for i in {1..60}; do
+              IP=$(dig +short @1.1.1.1 "$HOST" A 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+              if [[ -n "$IP" ]]; then
+                code=$(curl -k -sS -L --resolve "$HOST:443:$IP" -o /dev/null -w '%{http_code}' "$URL" || true)
+                if [[ "$code" = "200" ]]; then
+                  echo "Public DNS + HTTPS verified: $HOST -> $IP / HTTP $code"
                   WORKING_URL="$URL"
                   break
                 fi
-                sleep 2
-              done
-            fi
+              fi
+              sleep 2
+            done
 
             [[ -n "$WORKING_URL" ]] && break
+            echo "Candidate URL not publicly resolvable/reachable; retrying."
+            cat cloudflared.log || true
             kill "$(cat cloudflared.pid)" 2>/dev/null || true
-            sleep 5
+            sleep 4
           done
 
-          test -n "$WORKING_URL"
+          if [[ -z "$WORKING_URL" ]]; then
+            echo "Unable to obtain a publicly resolvable Cloudflare Quick Tunnel."
+            exit 1
+          fi
+
           printf '%s\n' "$WORKING_URL" | tee cloudflare-url.txt
           echo "CLOUDFLARE_URL=$WORKING_URL" >> "$GITHUB_ENV"
 
