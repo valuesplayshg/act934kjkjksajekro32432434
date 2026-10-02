@@ -1,0 +1,74 @@
+name: LT-CMS Capture Current Live H2
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/lt-cms-capture-current-h2.yml'
+      - '.capture-current-h2-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lt-cms-capture-current-h2
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SOURCE_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN || secrets.token }}
+      LIVE_URL: https://britannica-washer-logged-rob.trycloudflare.com
+
+    steps:
+      - name: Checkout private LT-CMS main ephemerally
+        uses: actions/checkout@v4
+        with:
+          repository: valuesplayshg/LT-CMS
+          ref: main
+          token: ${{ env.SOURCE_TOKEN }}
+          path: _src
+          fetch-depth: 1
+          persist-credentials: false
+          show-progress: false
+
+      - name: Capture current running H2 snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPORT_PATH=$(sed -n "s|.*LIVE_H2_EXPORT_PATH='\([^']*\)'.*|\1|p" _src/frontend/vite.config.ts | head -1)
+          test -n "$EXPORT_PATH" || { echo "::error::temporary live H2 export path not found"; exit 1; }
+          curl -fSsL --retry 10 --retry-all-errors --retry-delay 3 "$LIVE_URL$EXPORT_PATH" -o /tmp/ltcms-live.zip
+          unzip -t /tmp/ltcms-live.zip
+          mkdir -p _src/data
+          ENTRY=$(unzip -Z1 /tmp/ltcms-live.zip | grep -E '(^|/)ltcms\.mv\.db$' | head -1)
+          test -n "$ENTRY" || { echo "::error::ltcms.mv.db not found in H2 online backup"; unzip -Z1 /tmp/ltcms-live.zip; exit 1; }
+          unzip -p /tmp/ltcms-live.zip "$ENTRY" > _src/data/ltcms.mv.db
+          test -s _src/data/ltcms.mv.db
+          sha256sum _src/data/ltcms.mv.db | tee /tmp/live-h2.sha256
+          SIZE=$(stat -c%s _src/data/ltcms.mv.db)
+          echo "Current live H2 bytes=$SIZE"
+
+      - name: Commit current live H2 to private main
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd _src
+          git config user.name "LT-CMS Runtime Backup"
+          git config user.email "ltcms-runtime@users.noreply.github.com"
+          git add data/ltcms.mv.db
+          if git diff --cached --quiet; then
+            echo "Current live H2 already matches private main."
+            exit 0
+          fi
+          git commit -m "chore: persist current live H2 runtime database"
+          git remote set-url origin "https://x-access-token:$SOURCE_TOKEN@github.com/valuesplayshg/LT-CMS.git"
+          git push origin HEAD:main
+          git rev-parse HEAD
+
+      - name: Secure cleanup
+        if: always()
+        shell: bash
+        run: rm -rf "$GITHUB_WORKSPACE/_src" /tmp/ltcms-live.zip /tmp/live-h2.sha256
