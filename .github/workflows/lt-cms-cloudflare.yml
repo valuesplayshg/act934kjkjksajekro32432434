@@ -59,7 +59,51 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/lt-cms-cloudflare.yml/runs?branch=main&status=in_progress&per_page=20")
 
-          while IFS=
+          printf '%s' "$RUNS" | jq -r --arg current "$GITHUB_RUN_ID" '.workflow_runs[] | select((.id|tostring)!=$current) | "\(.id) \(.head_sha)"' > /tmp/previous-runs.txt
+
+          while read -r RUN_ID HEAD_SHA; do
+            [ -n "$RUN_ID" ] || continue
+
+            STATUS=$(curl -fsS \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status" || true)
+            OLD_URL=$(printf '%s' "$STATUS" | jq -r '.statuses[]? | select(.context=="lt-cms/cloudflare-preview" and .state=="success") | .target_url' | head -1)
+            [ -n "$OLD_URL" ] && [ "$OLD_URL" != "null" ] || continue
+
+            echo "Previous live preview candidate: run=$RUN_ID url=$OLD_URL"
+
+            for USER in user02 user03; do
+              rm -f /tmp/previous-cookies.txt /tmp/previous-login.json /tmp/previous-ltcms.mv.db
+              CSRF_JSON=$(curl -fsS --connect-timeout 5 --max-time 15 -c /tmp/previous-cookies.txt "$OLD_URL/api/auth/csrf" || true)
+              CSRF=$(printf '%s' "$CSRF_JSON" | jq -r '.token // empty')
+              HEADER=$(printf '%s' "$CSRF_JSON" | jq -r '.headerName // empty')
+              [ -n "$CSRF" ] && [ -n "$HEADER" ] || continue
+
+              curl -fsS -L -b /tmp/previous-cookies.txt -c /tmp/previous-cookies.txt \
+                -H "$HEADER: $CSRF" -H 'Content-Type: application/x-www-form-urlencoded' \
+                --data-urlencode "username=SITE001:$USER" --data-urlencode "password=$PASS" \
+                "$OLD_URL/api/auth/process" >/tmp/previous-login.json || continue
+
+              HTTP=$(curl -sS -L -o /tmp/previous-ltcms.mv.db -w '%{http_code}' \
+                -b /tmp/previous-cookies.txt -H 'X-Site-Code: SITE001' \
+                "$OLD_URL/api/admin/operations/runtime-h2.mv.db" || true)
+
+              if [ "$HTTP" = "200" ] && [ -s /tmp/previous-ltcms.mv.db ]; then
+                echo "Previous runtime H2 captured from $USER."
+                sha256sum /tmp/previous-ltcms.mv.db
+                echo "HANDOFF_OK=true" >> "$GITHUB_ENV"
+                echo "OLD_RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
+                echo "OLD_PREVIEW_URL=$OLD_URL" >> "$GITHUB_ENV"
+                break 2
+              fi
+            done
+          done < /tmp/previous-runs.txt
+
+          if [ ! -s /tmp/previous-ltcms.mv.db ]; then
+            echo "No transferable previous H2 runtime found; private data/ltcms.mv.db fallback will be used when present."
+          fi
+
       - name: Set up Node 22
         uses: actions/setup-node@v4
         with:
