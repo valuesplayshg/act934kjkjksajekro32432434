@@ -1,5 +1,6 @@
 LT-CMS latest main preview
 2026-10-02
-source commit: e46356dd8d74c693eb4a589f3ce6e8fd8ba080ee
+source commit: 59f59170429c9763286f549bfd95f1c32efcbbb0
 frontend: Vite 5173
 database: H2 file mode
+allowed host: .trycloudflare.com
