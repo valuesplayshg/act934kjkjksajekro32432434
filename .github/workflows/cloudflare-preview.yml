@@ -83,6 +83,29 @@ jobs:
           cat app.log
           exit 1
 
+      - name: Start Vite frontend and verify backend proxy
+        working-directory: source/frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup npm run dev -- --host 0.0.0.0 --port 5173 > ../../vite.log 2>&1 &
+          echo $! > ../../vite.pid
+          for i in {1..90}; do
+            ui_code=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:5173/ || true)
+            api_code=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:5173/api/system/info || true)
+            if [[ "$ui_code" = "200" && "$api_code" = "200" ]]; then
+              echo "Vite frontend ready on :5173; backend proxy healthy"
+              exit 0
+            fi
+            if ! kill -0 "$(cat ../../vite.pid)" 2>/dev/null; then
+              cat ../../vite.log
+              exit 1
+            fi
+            sleep 2
+          done
+          cat ../../vite.log
+          exit 1
+
       - name: Start Cloudflare Quick Tunnel
         shell: bash
         run: |
@@ -93,7 +116,7 @@ jobs:
           WORKING_URL=""
           for attempt in 1 2 3; do
             rm -f cloudflared.log cloudflared.pid
-            nohup ./cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8087 > cloudflared.log 2>&1 &
+            nohup ./cloudflared tunnel --no-autoupdate --url http://127.0.0.1:5173 > cloudflared.log 2>&1 &
             echo $! > cloudflared.pid
 
             URL=""
