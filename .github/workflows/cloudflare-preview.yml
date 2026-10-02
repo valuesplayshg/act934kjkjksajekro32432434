@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: lt-cms-cloudflare-preview-v2
+  group: lt-cms-external-preview-v3
   cancel-in-progress: true
 
 jobs:
@@ -108,67 +108,52 @@ jobs:
           cat ../../vite.log
           exit 1
 
-      - name: Start Cloudflare Quick Tunnel
+      - name: Start Pinggy HTTPS Tunnel
         shell: bash
         run: |
           set -euo pipefail
-          curl -L --fail --retry 3 -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-          chmod +x cloudflared
+          rm -f pinggy.log pinggy.pid
+
+          nohup ssh \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=30 \
+            -o ExitOnForwardFailure=yes \
+            -p 443 \
+            -R0:127.0.0.1:5173 \
+            free.pinggy.io > pinggy.log 2>&1 &
+          echo $! > pinggy.pid
 
           WORKING_URL=""
-          for attempt in 1 2 3 4 5; do
-            echo "Starting Cloudflare tunnel attempt $attempt/5"
-            rm -f cloudflared.log cloudflared.pid
-            nohup ./cloudflared tunnel --no-autoupdate --url http://127.0.0.1:5173 > cloudflared.log 2>&1 &
-            echo $! > cloudflared.pid
-
-            URL=""
-            for i in {1..60}; do
-              URL=$(grep -Eo 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' cloudflared.log | head -1 || true)
-              [[ -n "$URL" ]] && break
-              if ! kill -0 "$(cat cloudflared.pid)" 2>/dev/null; then
-                break
-              fi
-              sleep 2
-            done
-
-            if [[ -z "$URL" ]]; then
-              echo "Tunnel attempt $attempt did not produce a URL"
-              cat cloudflared.log || true
-              kill "$(cat cloudflared.pid)" 2>/dev/null || true
-              sleep 4
-              continue
-            fi
-
-            HOST=${URL#https://}
-            echo "Candidate URL: $URL"
-            for i in {1..60}; do
-              IP=$(dig +short @1.1.1.1 "$HOST" A 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
-              if [[ -n "$IP" ]]; then
-                code=$(curl -k -sS -L --resolve "$HOST:443:$IP" -o /dev/null -w '%{http_code}' "$URL" || true)
+          for i in {1..60}; do
+            URL=$(grep -Eo 'https://[a-zA-Z0-9.-]+\.(pinggy\.link|pinggy-free\.link)' pinggy.log | head -1 || true)
+            if [[ -n "$URL" ]]; then
+              for j in {1..30}; do
+                code=$(curl -k -sS -L --connect-timeout 5 --max-time 15 -o /dev/null -w '%{http_code}' "$URL" || true)
                 if [[ "$code" = "200" ]]; then
-                  echo "Public DNS + HTTPS verified: $HOST -> $IP / HTTP $code"
                   WORKING_URL="$URL"
                   break
                 fi
-              fi
-              sleep 2
-            done
-
+                sleep 2
+              done
+            fi
             [[ -n "$WORKING_URL" ]] && break
-            echo "Candidate URL not publicly resolvable/reachable; retrying."
-            cat cloudflared.log || true
-            kill "$(cat cloudflared.pid)" 2>/dev/null || true
-            sleep 4
+            if ! kill -0 "$(cat pinggy.pid)" 2>/dev/null; then
+              cat pinggy.log || true
+              break
+            fi
+            sleep 2
           done
 
           if [[ -z "$WORKING_URL" ]]; then
-            echo "Unable to obtain a publicly resolvable Cloudflare Quick Tunnel."
+            echo "Unable to obtain a healthy Pinggy HTTPS URL."
+            cat pinggy.log || true
             exit 1
           fi
 
           printf '%s\n' "$WORKING_URL" | tee cloudflare-url.txt
           echo "CLOUDFLARE_URL=$WORKING_URL" >> "$GITHUB_ENV"
+          echo "Preview URL: $WORKING_URL"
 
       - name: Publish only preview URL
         shell: bash
@@ -187,5 +172,5 @@ jobs:
       - name: Keep preview alive
         shell: bash
         run: |
-          echo "Cloudflare preview: $CLOUDFLARE_URL"
+          echo "External preview: $CLOUDFLARE_URL"
           sleep 20400
