@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: lt-cms-cloudflare-preview
+  group: lt-cms-cloudflare-preview-v2
   cancel-in-progress: true
 
 jobs:
