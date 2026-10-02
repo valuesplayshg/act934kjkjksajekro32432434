@@ -3,6 +3,9 @@ name: LT-CMS Private Source -> Live HMR Preview
 on:
   push:
     branches: [ main ]
+    paths:
+      - '.github/workflows/lt-cms-cloudflare.yml'
+      - '.lt-cms-ci-trigger'
   workflow_dispatch:
 
 permissions:
@@ -86,7 +89,18 @@ jobs:
           set -euo pipefail
           JAR=$(find _src/backend/target -maxdepth 1 -name 'lt-cms-*.jar' ! -name '*.original' | head -1)
           test -n "$JAR"
-          nohup java -jar "$JAR" >/tmp/ltcms-app.log 2>&1 &
+
+          RUNTIME_DB_DIR="$GITHUB_WORKSPACE/data"
+          RUNTIME_DB_BASE="$RUNTIME_DB_DIR/ltcms"
+          mkdir -p "$RUNTIME_DB_DIR"
+          if [ -f "_src/data/ltcms.mv.db" ]; then
+            cp "_src/data/ltcms.mv.db" "$RUNTIME_DB_BASE.mv.db"
+            echo "Restored persisted H2 DB from private main: data/ltcms.mv.db"
+          else
+            echo "No persisted H2 DB found in private main; starting with schema/sample initialization."
+          fi
+
+          nohup env CMS_DATABASE_MODE=file CMS_FILE_DB_PATH="$RUNTIME_DB_BASE" java -jar "$JAR" >/tmp/ltcms-app.log 2>&1 &
           echo $! >/tmp/ltcms-app.pid
 
           for i in {1..90}; do
