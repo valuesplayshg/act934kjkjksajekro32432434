@@ -62,7 +62,7 @@ jobs:
           grep -R -q 'extends EgovAbstractMapper' _src/backend/src/main/java/com/ltcms
           grep -R -q 'EgovUserDetailsHelper' _src/backend/src/main/java/com/ltcms
           grep -R -q 'EgovExcelService' _src/backend/src/main/java/com/ltcms
-          grep -q '@Import(EgovSecurityConfiguration.class)' _src/backend/src/main/java/com/ltcms/EgovRuntimeConfig.java
+          grep -q '@Import(EgovSecurityConfiguration.class)' _src/backend/src/main/java/com/ltcms/LtCmsFrameworkConfig.java
           test -f _src/docs/COMPATIBILITY_GUIDE_PRECHECK_20260930.md
           test -f _src/docs/EGOVFRAME_5_COMPLIANCE_POLICY.md
           test -f _src/docs/REVIEW_SOURCE_INDEX.md
